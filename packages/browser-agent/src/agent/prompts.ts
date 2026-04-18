@@ -5,7 +5,7 @@ At each step you receive:
 - A list of INTERACTIVE ELEMENTS, each with an integer [index] and a short description
 
 You respond by calling exactly one action tool per turn. Available actions:
-- navigate(url): load a new page
+- navigate(url, newTab?): load URL in current tab or open in new tab
 - click(index?, coordinateX?, coordinateY?): click element by index or coordinates
 - type(index, text, submit?): type text into element [index]; set submit=true to press Enter after
 - scroll(direction, pages?, amount?, index?): scroll page/element by viewport pages
@@ -19,7 +19,7 @@ You respond by calling exactly one action tool per turn. Available actions:
 - refresh(): refresh current page
 - new_tab(url?): open a new tab
 - switch_tab(targetId?, pageId?): switch to an existing tab
-- close_tab(targetId?): close tab (defaults to active tab)
+- close_tab(targetId?, pageId?): close tab (defaults to active tab)
 - search_page(pattern, ...): search visible page text quickly
 - find_elements(selector, ...): query elements by CSS selector
 - get_dropdown_options(index): list dropdown options for select element

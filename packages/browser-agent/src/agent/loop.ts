@@ -55,8 +55,8 @@ const TOOL_DESCRIPTIONS: Array<{
 }> = [
   {
     name: "navigate",
-    description: "Navigate current tab to absolute URL",
-    input: { url: "string" },
+    description: "Navigate to absolute URL, optionally in a new tab",
+    input: { url: "string", newTab: "boolean?" },
   },
   {
     name: "click",
@@ -130,8 +130,8 @@ const TOOL_DESCRIPTIONS: Array<{
   },
   {
     name: "close_tab",
-    description: "Close tab by targetId or active tab when omitted",
-    input: { targetId: "string?" },
+    description: "Close tab by targetId, by pageId, or active tab when omitted",
+    input: { targetId: "string?", pageId: "integer?" },
   },
   {
     name: "search_page",

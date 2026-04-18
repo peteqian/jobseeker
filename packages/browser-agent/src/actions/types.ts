@@ -2,6 +2,7 @@ import { z } from "zod";
 
 export const navigateAction = z.object({
   url: z.string().url(),
+  newTab: z.boolean().optional(),
 });
 
 export const clickAction = z
@@ -94,6 +95,7 @@ export const switchTabAction = z
 
 export const closeTabAction = z.object({
   targetId: z.string().min(1).optional(),
+  pageId: z.number().int().nonnegative().optional(),
 });
 
 export const searchPageAction = z.object({

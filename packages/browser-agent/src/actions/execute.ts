@@ -120,7 +120,10 @@ export async function executeAction(
   try {
     switch (action.name) {
       case "navigate": {
-        const health = await page.navigateWithHealthCheck(action.params.url);
+        const newTab = action.params.newTab ?? false;
+        const targetPage = newTab ? await requireSession(session, action.name).newPage() : page;
+
+        const health = await targetPage.navigateWithHealthCheck(action.params.url);
         if (!health.ok) {
           const warning =
             `Navigated to ${action.params.url}, but page appears empty. ${health.warning ?? ""}`.trim();
@@ -129,10 +132,19 @@ export async function executeAction(
             message: warning,
             extractedContent: warning,
             longTermMemory: `Navigation warning for ${action.params.url}`,
+            activeTargetId: newTab ? targetPage.targetId : undefined,
           };
         }
-        const memory = `Navigated to ${action.params.url}`;
-        return { ok: true, message: memory, extractedContent: memory, longTermMemory: memory };
+        const memory = newTab
+          ? `Opened new tab and navigated to ${action.params.url}`
+          : `Navigated to ${action.params.url}`;
+        return {
+          ok: true,
+          message: memory,
+          extractedContent: memory,
+          longTermMemory: memory,
+          activeTargetId: newTab ? targetPage.targetId : undefined,
+        };
       }
 
       case "click": {
@@ -345,7 +357,28 @@ export async function executeAction(
 
       case "close_tab": {
         const currentSession = requireSession(session, action.name);
-        const closingTargetId = action.params.targetId ?? page.targetId;
+        const targetIds = await currentSession.listPageTargetIds();
+        const closingTargetId =
+          action.params.targetId ??
+          (typeof action.params.pageId === "number"
+            ? targetIds[action.params.pageId]
+            : undefined) ??
+          page.targetId;
+
+        if (!closingTargetId || !targetIds.includes(closingTargetId)) {
+          return {
+            ok: false,
+            message:
+              typeof action.params.pageId === "number"
+                ? `Tab pageId ${action.params.pageId} not found`
+                : `Tab not found: ${action.params.targetId}`,
+            extractedContent:
+              typeof action.params.pageId === "number"
+                ? `Tab pageId ${action.params.pageId} not found`
+                : `Tab not found: ${action.params.targetId}`,
+          };
+        }
+
         await currentSession.closePage(closingTargetId);
         const remaining = await currentSession.listPageTargetIds();
         if (remaining.length === 0) {

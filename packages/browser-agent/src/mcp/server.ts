@@ -126,27 +126,27 @@ export function createServer(): McpServer {
   server.registerTool(
     "close_tab",
     {
-      description: "Close tab by targetId (defaults to active tab).",
-      inputSchema: z.object({ sessionId: z.string(), targetId: z.string().optional() }),
+      description: "Close tab by targetId, pageId, or active tab when omitted.",
+      inputSchema: z.object({
+        sessionId: z.string(),
+        targetId: z.string().optional(),
+        pageId: z.number().int().nonnegative().optional(),
+      }),
     },
-    async ({ sessionId, targetId }) => {
+    async ({ sessionId, targetId, pageId }) => {
       const record = getSession(sessionId);
-      const closingTargetId = targetId ?? record.page.targetId;
-      await record.session.closePage(closingTargetId);
-
-      const remaining = await record.session.listPageTargetIds();
-      if (remaining.length === 0) {
-        const replacement = await record.session.newPage();
-        record.page = replacement;
-      } else if (record.page.targetId === closingTargetId) {
-        const nextTargetId = remaining[0];
-        if (!nextTargetId) {
-          throw new Error("No remaining tab available after close");
-        }
-        setCurrentPage(record, nextTargetId);
+      const result = await executeAction(
+        record.page,
+        {
+          name: "close_tab",
+          params: { targetId, pageId },
+        },
+        record.session,
+      );
+      if (result.activeTargetId) {
+        setCurrentPage(record, result.activeTargetId);
       }
-
-      return jsonResult({ ok: true, activeTargetId: record.page.targetId });
+      return jsonResult(result);
     },
   );
 
@@ -234,11 +234,23 @@ export function createServer(): McpServer {
     "navigate",
     {
       description: "Navigate to a URL.",
-      inputSchema: z.object({ sessionId: z.string(), url: z.string().url() }),
+      inputSchema: z.object({
+        sessionId: z.string(),
+        url: z.string().url(),
+        newTab: z.boolean().optional(),
+      }),
     },
-    async ({ sessionId, url }) => {
-      const { page } = getSession(sessionId);
-      return jsonResult(await executeAction(page, { name: "navigate", params: { url } }));
+    async ({ sessionId, url, newTab }) => {
+      const record = getSession(sessionId);
+      const result = await executeAction(
+        record.page,
+        { name: "navigate", params: { url, newTab } },
+        record.session,
+      );
+      if (result.activeTargetId) {
+        setCurrentPage(record, result.activeTargetId);
+      }
+      return jsonResult(result);
     },
   );
 
