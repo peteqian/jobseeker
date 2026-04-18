@@ -1,88 +1,119 @@
-import type { ExplorerPresetId, StructuredProfile } from "@jobseeker/contracts";
-
-export interface ExplorerPreset {
-  id: ExplorerPresetId;
-  label: string;
-  description: string;
-  market: "Australia" | "Global";
-  focus: string;
-  sourceFamilies: string[];
-  tags: string[];
-}
+import type {
+  ExplorerDomainConfig,
+  ExplorerFreshness,
+  StructuredProfile,
+} from "@jobseeker/contracts";
 
 export interface ExplorerQuerySuggestion {
   id: string;
   label: string;
-  kind: "role" | "location" | "keyword" | "combined";
+  kind: "role" | "location" | "keyword" | "combined" | "remote";
 }
 
-export interface ExplorerDomainTarget {
-  id: string;
-  domain: string;
-  queries: ExplorerQuerySuggestion[];
+export const DEFAULT_JOB_LIMIT = 25;
+export const DEFAULT_FRESHNESS: ExplorerFreshness = "week";
+
+export const FRESHNESS_LABELS: Record<ExplorerFreshness, string> = {
+  "24h": "Last 24 hours",
+  week: "Last week",
+  month: "Last month",
+  any: "Any time",
+};
+
+export function createDomainConfig(domain: string): ExplorerDomainConfig {
+  return {
+    domain: domain.trim(),
+    enabled: true,
+    jobLimit: DEFAULT_JOB_LIMIT,
+    freshness: DEFAULT_FRESHNESS,
+    queries: [],
+  };
 }
 
-export const explorerPresets: ExplorerPreset[] = [
-  {
-    id: "australia-general",
-    label: "Australia general",
-    description: "Seek, LinkedIn, and broad AU hiring surfaces.",
-    market: "Australia",
-    focus: "General market coverage across mainstream AU hiring channels.",
-    sourceFamilies: ["Seek", "LinkedIn", "AU general boards"],
-    tags: ["generalist", "australia", "broad reach"],
-  },
-  {
-    id: "product-engineering",
-    label: "Product engineering",
-    description: "Startup and product-oriented hiring networks.",
-    market: "Global",
-    focus: "Product-led teams, startup operators, and software product orgs.",
-    sourceFamilies: ["Greenhouse", "Lever", "Startup boards"],
-    tags: ["product", "engineering", "startup"],
-  },
-  {
-    id: "ai-and-data",
-    label: "AI and data",
-    description: "Data, ML, and AI-specialized job boards.",
-    market: "Global",
-    focus: "ML, data, and AI-specific hiring surfaces and communities.",
-    sourceFamilies: ["AI job boards", "ML communities", "Data specialist boards"],
-    tags: ["ai", "machine learning", "data"],
-  },
-];
+export function addQueryToDomain(
+  config: ExplorerDomainConfig,
+  query: string,
+): ExplorerDomainConfig {
+  const trimmed = query.trim();
+  if (!trimmed) return config;
 
-export function normalizeExplorerDomains(input: string | string[]): string[] {
-  const values = Array.isArray(input) ? input : input.split(/[\n,]/g);
-  const deduped = new Map<string, string>();
+  const key = trimmed.toLowerCase();
+  if (config.queries.some((entry) => entry.toLowerCase() === key)) {
+    return config;
+  }
 
-  for (const value of values) {
-    const normalized = value.trim();
-    if (!normalized) continue;
+  return { ...config, queries: [...config.queries, trimmed] };
+}
 
-    const key = normalized.toLowerCase();
-    if (!deduped.has(key)) {
-      deduped.set(key, normalized);
+export function removeQueryFromDomain(
+  config: ExplorerDomainConfig,
+  query: string,
+): ExplorerDomainConfig {
+  const key = query.toLowerCase();
+  return {
+    ...config,
+    queries: config.queries.filter((entry) => entry.toLowerCase() !== key),
+  };
+}
+
+export function parseDomainLines(input: string): string[] {
+  const tokens = input.split(/[\n,]/g);
+  const seen = new Map<string, string>();
+
+  for (const token of tokens) {
+    const value = token.trim();
+    if (!value) continue;
+
+    const key = value.toLowerCase();
+    if (!seen.has(key)) {
+      seen.set(key, value);
     }
   }
 
-  return [...deduped.values()];
+  return [...seen.values()];
 }
 
-export function getExplorerStats(presetIds: ExplorerPresetId[], domains: string[]) {
-  const selectedPresets = explorerPresets.filter((preset) => presetIds.includes(preset.id));
-  const uniqueSourceFamilies = new Set(selectedPresets.flatMap((preset) => preset.sourceFamilies));
-  const uniqueMarkets = new Set(selectedPresets.map((preset) => preset.market));
-  const uniqueTags = new Set(selectedPresets.flatMap((preset) => preset.tags));
+export function mergeDomainConfigs(
+  existing: ExplorerDomainConfig[],
+  domains: string[],
+): ExplorerDomainConfig[] {
+  const byKey = new Map(existing.map((entry) => [entry.domain.toLowerCase(), entry]));
+
+  return domains.map((domain) => byKey.get(domain.toLowerCase()) ?? createDomainConfig(domain));
+}
+
+export function upsertDomainConfig(
+  list: ExplorerDomainConfig[],
+  next: ExplorerDomainConfig,
+): ExplorerDomainConfig[] {
+  const key = next.domain.toLowerCase();
+  const index = list.findIndex((entry) => entry.domain.toLowerCase() === key);
+
+  if (index === -1) {
+    return [...list, next];
+  }
+
+  const copy = list.slice();
+  copy[index] = next;
+  return copy;
+}
+
+export function removeDomainConfig(
+  list: ExplorerDomainConfig[],
+  domain: string,
+): ExplorerDomainConfig[] {
+  const key = domain.toLowerCase();
+  return list.filter((entry) => entry.domain.toLowerCase() !== key);
+}
+
+export function getExplorerStats(domains: ExplorerDomainConfig[]) {
+  const enabled = domains.filter((entry) => entry.enabled);
+  const totalCap = enabled.reduce((sum, entry) => sum + entry.jobLimit, 0);
 
   return {
-    selectedPresetCount: selectedPresets.length,
-    availablePresetCount: explorerPresets.length,
-    manualDomainCount: domains.length,
-    sourceFamilyCount: uniqueSourceFamilies.size,
-    coverageCount: uniqueSourceFamilies.size + domains.length,
-    markets: [...uniqueMarkets],
-    tags: [...uniqueTags],
+    domainCount: domains.length,
+    enabledCount: enabled.length,
+    totalJobCap: totalCap,
   };
 }
 
@@ -99,11 +130,16 @@ export function getExplorerQuerySuggestions(
     .filter(Boolean)
     .slice(0, 3);
 
-  const locations = [...profile.targeting.locations]
-    .sort((left, right) => right.priority - left.priority)
+  const sortedLocations = [...profile.targeting.locations].sort(
+    (left, right) => right.priority - left.priority,
+  );
+
+  const locations = sortedLocations
     .map((location) => formatLocation(location))
     .filter(Boolean)
     .slice(0, 2);
+
+  const remoteTerms = getRemoteTerms(sortedLocations).slice(0, 2);
 
   const keywords = profile.searchContext.effectiveKeywords
     .map((keyword) => keyword.trim())
@@ -113,27 +149,19 @@ export function getExplorerQuerySuggestions(
   const suggestions: ExplorerQuerySuggestion[] = [];
 
   for (const role of roles) {
-    suggestions.push({
-      id: `role:${role}`,
-      label: role,
-      kind: "role",
-    });
+    suggestions.push({ id: `role:${role}`, label: role, kind: "role" });
   }
 
   for (const location of locations) {
-    suggestions.push({
-      id: `location:${location}`,
-      label: location,
-      kind: "location",
-    });
+    suggestions.push({ id: `location:${location}`, label: location, kind: "location" });
+  }
+
+  for (const term of remoteTerms) {
+    suggestions.push({ id: `remote:${term}`, label: term, kind: "remote" });
   }
 
   for (const keyword of keywords) {
-    suggestions.push({
-      id: `keyword:${keyword}`,
-      label: keyword,
-      kind: "keyword",
-    });
+    suggestions.push({ id: `keyword:${keyword}`, label: keyword, kind: "keyword" });
   }
 
   for (const role of roles.slice(0, 2)) {
@@ -152,20 +180,17 @@ export function getExplorerQuerySuggestions(
         kind: "combined",
       });
     }
+
+    for (const term of remoteTerms.slice(0, 1)) {
+      suggestions.push({
+        id: `combined:${role}:${term}`,
+        label: `${role} ${term}`,
+        kind: "combined",
+      });
+    }
   }
 
   return dedupeQueries(suggestions).slice(0, 8);
-}
-
-export function getExplorerDomainTargets(
-  domains: string[],
-  queries: ExplorerQuerySuggestion[],
-): ExplorerDomainTarget[] {
-  return domains.map((domain) => ({
-    id: domain.toLowerCase(),
-    domain,
-    queries,
-  }));
 }
 
 function dedupeQueries(queries: ExplorerQuerySuggestion[]) {
@@ -185,9 +210,29 @@ function dedupeQueries(queries: ExplorerQuerySuggestion[]) {
 function formatLocation(location: StructuredProfile["targeting"]["locations"][number]) {
   const parts = [location.city, location.state, location.country].filter(Boolean);
 
-  if (location.remote === "full") {
-    return parts.length > 0 ? `${parts.join(", ")} remote` : "remote";
+  if (parts.length === 0) return "";
+  return parts.join(", ");
+}
+
+function getRemoteTerms(
+  locations: StructuredProfile["targeting"]["locations"],
+): ExplorerQuerySuggestion["label"][] {
+  let hasRemote = false;
+  let hasHybrid = false;
+
+  for (const location of locations) {
+    if (location.remote === "full") {
+      hasRemote = true;
+      continue;
+    }
+
+    if (location.remote === "hybrid") {
+      hasHybrid = true;
+    }
   }
 
-  return parts.join(", ");
+  const terms: string[] = [];
+  if (hasRemote) terms.push("remote");
+  if (hasHybrid) terms.push("hybrid");
+  return terms;
 }

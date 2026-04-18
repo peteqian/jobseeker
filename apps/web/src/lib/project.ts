@@ -49,7 +49,7 @@ export function getRankedJobs(project: ProjectSnapshot | null) {
 
 export function getProjectStages(project: ProjectSnapshot | null) {
   const resumeDoc = getResumeDoc(project);
-  const semanticProfile = latestDocument(project?.documents ?? [], "semantic_profile");
+  const hasProfile = Boolean(project?.profile);
   const tailoredResume = latestDocument(project?.documents ?? [], "tailored_resume");
   const questionCount = project?.questionCards.length ?? project?.questions.length ?? 0;
   const answeredQuestionCount =
@@ -72,7 +72,7 @@ export function getProjectStages(project: ProjectSnapshot | null) {
           ? answeredQuestionCount === questionCount
             ? `${questionCount} answered`
             : `${questionCount - answeredQuestionCount} open`
-          : semanticProfile
+          : hasProfile
             ? "Clear"
             : "Ready",
       complete: Boolean(resumeDoc) && questionCount > 0 && answeredQuestionCount === questionCount,
@@ -82,17 +82,17 @@ export function getProjectStages(project: ProjectSnapshot | null) {
       title: "Profile",
       detail: !resumeDoc
         ? "Pending"
-        : semanticProfile
+        : hasProfile
           ? "Built"
           : questionCount > 0
             ? "Waiting on answers"
             : "Ready",
-      complete: Boolean(semanticProfile),
+      complete: hasProfile,
     },
     {
       id: "explorer" as const,
       title: "Explorer",
-      detail: jobCount > 0 ? `${jobCount} jobs found` : semanticProfile ? "Ready" : "Locked",
+      detail: jobCount > 0 ? `${jobCount} jobs found` : hasProfile ? "Ready" : "Locked",
       complete: jobCount > 0,
     },
     {

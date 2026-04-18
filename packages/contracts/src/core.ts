@@ -14,11 +14,7 @@ export type TaskStatus =
   | "failed"
   | "interrupted";
 
-export type ProjectDocumentKind =
-  | "resume_source"
-  | "extracted_text"
-  | "semantic_profile"
-  | "tailored_resume";
+export type ProjectDocumentKind = "resume_source" | "extracted_text" | "tailored_resume";
 
 export type RuntimeEventType =
   | "project.created"
@@ -36,4 +32,4 @@ export type RuntimeEventType =
 
 export type JobSource = "seek" | "explorer";
 
-export type ExplorerPresetId = "australia-general" | "product-engineering" | "ai-and-data";
+export type ExplorerFreshness = "24h" | "week" | "month" | "any";

@@ -1,0 +1,1397 @@
+import { mkdirSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
+
+import { CDPClient } from "../cdp/client";
+import { launchBrowserFromProfile, type LaunchOptions, type LaunchedBrowser } from "../cdp/launch";
+import { BrowserProfile, type BrowserProfileInit } from "./profile";
+import { CaptchaWatchdog, type CaptchaWaitResult } from "./watchdogs/captcha";
+
+export type BrowserSessionState =
+  | "idle"
+  | "launching"
+  | "connecting"
+  | "connected"
+  | "reconnecting"
+  | "disconnected"
+  | "stopped";
+
+export interface BrowserSessionOptions {
+  profile?: BrowserProfileInit;
+  launch?: LaunchOptions;
+  cdpUrl?: string;
+}
+
+interface AttachedTargetEvent {
+  sessionId: string;
+  targetInfo: { targetId: string; type: string; url: string };
+}
+
+interface DetachedTargetEvent {
+  sessionId: string;
+  targetId: string;
+}
+
+interface JavascriptDialogOpeningEvent {
+  type?: "alert" | "confirm" | "prompt" | "beforeunload";
+}
+
+export interface PendingNetworkRequest {
+  url: string;
+  method: string;
+  loadingDurationMs: number;
+  resourceType: string;
+}
+
+export interface SearchPageParams {
+  pattern: string;
+  regex?: boolean;
+  caseSensitive?: boolean;
+  contextChars?: number;
+  cssScope?: string;
+  maxResults?: number;
+}
+
+export interface FindElementsParams {
+  selector: string;
+  attributes?: string[];
+  maxResults?: number;
+  includeText?: boolean;
+}
+
+export interface NavigationHealthResult {
+  ok: boolean;
+  warning?: string;
+}
+
+export interface ExtractContentParams {
+  query: string;
+  extractLinks?: boolean;
+  extractImages?: boolean;
+  startFromChar?: number;
+  maxChars?: number;
+}
+
+export interface ExtractContentResult {
+  url: string;
+  query: string;
+  content: string;
+  stats: {
+    totalChars: number;
+    startFromChar: number;
+    returnedChars: number;
+    truncated: boolean;
+    nextStartChar: number | null;
+    linksCount: number;
+    imagesCount: number;
+  };
+}
+
+const STEALTH_INIT_SCRIPT = `
+(() => {
+  const patch = (obj, key, value) => {
+    try {
+      Object.defineProperty(obj, key, { get: () => value, configurable: true });
+    } catch {}
+  };
+
+  patch(Navigator.prototype, "webdriver", undefined);
+  patch(Navigator.prototype, "language", "en-US");
+  patch(Navigator.prototype, "languages", ["en-US", "en"]);
+  patch(Navigator.prototype, "plugins", [1, 2, 3, 4, 5]);
+  patch(Navigator.prototype, "hardwareConcurrency", 8);
+
+  if (!window.chrome) {
+    // Minimal chrome object expected by many bot checks.
+    window.chrome = { runtime: {} };
+  } else if (!window.chrome.runtime) {
+    window.chrome.runtime = {};
+  }
+})();
+`;
+
+export class BrowserSession {
+  readonly profile: BrowserProfile;
+
+  private browser: LaunchedBrowser | null = null;
+  private client: CDPClient | null = null;
+  private state: BrowserSessionState = "idle";
+  private intentionalStop = false;
+  private reconnecting = false;
+
+  private targetToSession = new Map<string, string>();
+  private sessionToTarget = new Map<string, string>();
+  private pageCache = new Map<string, Page>();
+  private stateListeners = new Set<(state: BrowserSessionState) => void>();
+
+  private captchaWatchdog = new CaptchaWatchdog();
+
+  constructor(options: BrowserSessionOptions = {}) {
+    const mergedProfile = new BrowserProfile({
+      ...options.profile,
+      ...(options.launch
+        ? {
+            executablePath: options.launch.executablePath,
+            channel: options.launch.channel,
+            headless: options.launch.headless,
+            userDataDir: options.launch.userDataDir,
+            proxyServer: options.launch.proxyServer,
+            proxyBypass: options.launch.proxyBypass,
+            userAgent: options.launch.userAgent,
+            acceptLanguage: options.launch.acceptLanguage,
+            locale: options.launch.locale,
+            timezoneId: options.launch.timezoneId,
+            extensionPaths: options.launch.extensionPaths,
+            remoteDebuggingPort: options.launch.port,
+            docker: options.launch.docker,
+            disableSecurity: options.launch.disableSecurity,
+            extraArgs: options.launch.extraArgs,
+            maxLaunchRetries: options.launch.maxRetries,
+            autoInstallBrowser: options.launch.autoInstallBrowser,
+          }
+        : {}),
+      cdpUrl: options.cdpUrl ?? options.profile?.cdpUrl,
+    });
+    this.profile = mergedProfile;
+  }
+
+  static async launch(options: LaunchOptions = {}): Promise<BrowserSession> {
+    const session = new BrowserSession({ launch: options });
+    await session.start();
+    return session;
+  }
+
+  get currentState(): BrowserSessionState {
+    return this.state;
+  }
+
+  onStateChange(handler: (state: BrowserSessionState) => void): () => void {
+    this.stateListeners.add(handler);
+    return () => this.stateListeners.delete(handler);
+  }
+
+  private setState(state: BrowserSessionState): void {
+    this.state = state;
+    for (const listener of this.stateListeners) {
+      listener(state);
+    }
+  }
+
+  private ensureClient(): CDPClient {
+    if (!this.client) {
+      throw new Error("Browser session is not connected");
+    }
+    return this.client;
+  }
+
+  private getSocketUrl(): string {
+    if (this.profile.cdpUrl) return this.profile.cdpUrl;
+    if (this.browser?.webSocketDebuggerUrl) return this.browser.webSocketDebuggerUrl;
+    throw new Error("No CDP URL available for connection");
+  }
+
+  async start(): Promise<void> {
+    this.intentionalStop = false;
+    this.setState("launching");
+
+    if (this.profile.isManagedLocal()) {
+      this.browser = await launchBrowserFromProfile(this.profile);
+    }
+
+    this.setState("connecting");
+    await this.connectToEndpoint(this.getSocketUrl());
+    this.setState("connected");
+  }
+
+  private async connectToEndpoint(wsUrl: string): Promise<void> {
+    const client = new CDPClient(wsUrl);
+    await client.waitForOpen();
+
+    client.onClose(() => {
+      if (this.intentionalStop) {
+        this.setState("stopped");
+        return;
+      }
+      this.setState("disconnected");
+      void this.reconnectIfNeeded();
+    });
+
+    this.client = client;
+
+    if (this.profile.captchaSolver) {
+      this.captchaWatchdog.attach(client);
+    }
+
+    client.on("Target.attachedToTarget", async (params) => {
+      const event = params as AttachedTargetEvent;
+      if (event.targetInfo.type !== "page") return;
+      this.targetToSession.set(event.targetInfo.targetId, event.sessionId);
+      this.sessionToTarget.set(event.sessionId, event.targetInfo.targetId);
+      await this.enableDomains(event.sessionId);
+    });
+
+    client.on("Target.detachedFromTarget", (params) => {
+      const event = params as DetachedTargetEvent;
+      this.sessionToTarget.delete(event.sessionId);
+      this.targetToSession.delete(event.targetId);
+    });
+
+    client.on("Page.javascriptDialogOpening", async (params, sessionId) => {
+      if (!sessionId) return;
+      const event = (params ?? {}) as JavascriptDialogOpeningEvent;
+      const dialogType = event.type ?? "alert";
+      const shouldAccept = dialogType !== "prompt";
+      try {
+        await client.send(
+          "Page.handleJavaScriptDialog",
+          {
+            accept: shouldAccept,
+          },
+          sessionId,
+        );
+      } catch {
+        // ignore dialog handling errors
+      }
+    });
+
+    await client.send("Target.setDiscoverTargets", { discover: true });
+    await client.send("Target.setAutoAttach", {
+      autoAttach: true,
+      flatten: true,
+      waitForDebuggerOnStart: false,
+    });
+
+    await this.attachExistingPages();
+  }
+
+  private async attachExistingPages(): Promise<void> {
+    const client = this.ensureClient();
+    const response = await client.send<{ targetInfos?: Array<{ targetId: string; type: string }> }>(
+      "Target.getTargets",
+    );
+    const targetInfos = response.targetInfos ?? [];
+
+    for (const info of targetInfos) {
+      if (info.type !== "page") continue;
+      if (this.targetToSession.has(info.targetId)) continue;
+      await this.attachTarget(info.targetId);
+    }
+  }
+
+  private async reconnectIfNeeded(): Promise<void> {
+    if (this.reconnecting || !this.profile.reconnectOnDisconnect || this.intentionalStop) {
+      return;
+    }
+
+    this.reconnecting = true;
+    this.setState("reconnecting");
+
+    try {
+      let attempt = 0;
+      while (attempt < this.profile.reconnectMaxAttempts && !this.intentionalStop) {
+        attempt += 1;
+
+        if (this.profile.isManagedLocal()) {
+          const browserStillAlive = this.browser?.process.exitCode === null;
+          if (!browserStillAlive) {
+            this.browser = await launchBrowserFromProfile(this.profile);
+          }
+        }
+
+        try {
+          await this.connectToEndpoint(this.getSocketUrl());
+          this.setState("connected");
+          return;
+        } catch {
+          const backoff = Math.min(
+            this.profile.reconnectMaxDelayMs,
+            this.profile.reconnectBaseDelayMs * 2 ** (attempt - 1),
+          );
+          await delay(backoff);
+        }
+      }
+
+      this.setState("disconnected");
+    } finally {
+      this.reconnecting = false;
+    }
+  }
+
+  private async enableDomains(sessionId: string): Promise<void> {
+    const client = this.ensureClient();
+    await client.send("Page.enable", {}, sessionId);
+    await client.send(
+      "Page.addScriptToEvaluateOnNewDocument",
+      { source: STEALTH_INIT_SCRIPT },
+      sessionId,
+    );
+    if (this.profile.userAgent || this.profile.acceptLanguage) {
+      await client
+        .send(
+          "Emulation.setUserAgentOverride",
+          {
+            userAgent:
+              this.profile.userAgent ??
+              "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            acceptLanguage: this.profile.acceptLanguage,
+            platform: "MacIntel",
+          },
+          sessionId,
+        )
+        .catch(() => {
+          // best effort
+        });
+    }
+    if (this.profile.locale) {
+      await client
+        .send("Emulation.setLocaleOverride", { locale: this.profile.locale }, sessionId)
+        .catch(() => {
+          // best effort
+        });
+    }
+    if (this.profile.timezoneId) {
+      await client
+        .send("Emulation.setTimezoneOverride", { timezoneId: this.profile.timezoneId }, sessionId)
+        .catch(() => {
+          // best effort
+        });
+    }
+    await client.send("Runtime.enable", {}, sessionId);
+    await client.send("DOM.enable", {}, sessionId);
+  }
+
+  private async attachTarget(targetId: string): Promise<string> {
+    const client = this.ensureClient();
+    const { sessionId } = await client.send<{ sessionId: string }>("Target.attachToTarget", {
+      targetId,
+      flatten: true,
+    });
+    this.targetToSession.set(targetId, sessionId);
+    this.sessionToTarget.set(sessionId, targetId);
+    await this.enableDomains(sessionId);
+    return sessionId;
+  }
+
+  private async getOrAttachSessionId(targetId: string): Promise<string> {
+    const current = this.targetToSession.get(targetId);
+    if (current) return current;
+    return this.attachTarget(targetId);
+  }
+
+  async sendToTarget<TResult = unknown>(
+    targetId: string,
+    method: string,
+    params: Record<string, unknown> = {},
+  ): Promise<TResult> {
+    const sessionId = await this.getOrAttachSessionId(targetId);
+    return this.ensureClient().send<TResult>(method, params, sessionId);
+  }
+
+  async send<TResult = unknown>(
+    method: string,
+    params: Record<string, unknown> = {},
+  ): Promise<TResult> {
+    return this.ensureClient().send<TResult>(method, params);
+  }
+
+  onTargetAttached(handler: (event: AttachedTargetEvent) => void): () => void {
+    return this.ensureClient().on("Target.attachedToTarget", (params) =>
+      handler(params as AttachedTargetEvent),
+    );
+  }
+
+  async waitIfCaptchaSolving(timeoutMs?: number): Promise<CaptchaWaitResult | null> {
+    return this.captchaWatchdog.waitIfSolving(timeoutMs);
+  }
+
+  async newPage(): Promise<Page> {
+    const client = this.ensureClient();
+    const { targetId } = await client.send<{ targetId: string }>("Target.createTarget", {
+      url: "about:blank",
+    });
+    await this.getOrAttachSessionId(targetId);
+    const page = this.pageCache.get(targetId) ?? new Page(this, targetId);
+    this.pageCache.set(targetId, page);
+    return page;
+  }
+
+  async closePage(targetId: string): Promise<void> {
+    await this.send("Target.closeTarget", { targetId });
+    this.targetToSession.delete(targetId);
+    const page = this.pageCache.get(targetId);
+    if (page) {
+      this.pageCache.delete(targetId);
+    }
+  }
+
+  getPage(targetId: string): Page {
+    const existing = this.pageCache.get(targetId);
+    if (existing) return existing;
+    const created = new Page(this, targetId);
+    this.pageCache.set(targetId, created);
+    return created;
+  }
+
+  async listPages(): Promise<Page[]> {
+    const client = this.ensureClient();
+    const response = await client.send<{ targetInfos?: Array<{ targetId: string; type: string }> }>(
+      "Target.getTargets",
+    );
+    const targetInfos = response.targetInfos ?? [];
+    return targetInfos
+      .filter((target) => target.type === "page")
+      .map((target) => this.getPage(target.targetId));
+  }
+
+  async listPageTargetIds(): Promise<string[]> {
+    const pages = await this.listPages();
+    return pages.map((page) => page.targetId);
+  }
+
+  async close(): Promise<void> {
+    this.intentionalStop = true;
+    this.setState("stopped");
+
+    this.client?.close();
+    this.client = null;
+
+    if (this.browser) {
+      await this.browser.close();
+      this.browser = null;
+    }
+
+    this.targetToSession.clear();
+    this.sessionToTarget.clear();
+  }
+
+  async kill(): Promise<void> {
+    this.intentionalStop = true;
+    this.client?.close();
+    this.client = null;
+
+    if (this.browser) {
+      await this.browser.kill();
+      this.browser = null;
+    }
+
+    this.setState("stopped");
+    this.targetToSession.clear();
+    this.sessionToTarget.clear();
+  }
+}
+
+export class Page {
+  private session: BrowserSession;
+  readonly targetId: string;
+
+  constructor(session: BrowserSession, targetId: string) {
+    this.session = session;
+    this.targetId = targetId;
+  }
+
+  async goto(url: string, waitUntil: "load" | "domcontentloaded" = "load"): Promise<void> {
+    await this.session.sendToTarget(this.targetId, "Page.navigate", { url });
+
+    const startedAt = Date.now();
+    const timeoutMs = 30_000;
+    while (Date.now() - startedAt < timeoutMs) {
+      const readyState = await this.evaluate<string>("document.readyState").catch(() => "loading");
+      if (waitUntil === "domcontentloaded") {
+        if (readyState === "interactive" || readyState === "complete") return;
+      } else if (readyState === "complete") {
+        return;
+      }
+      await delay(100);
+    }
+
+    throw new Error(`Navigation timeout after ${timeoutMs}ms for ${url}`);
+  }
+
+  async goBack(): Promise<boolean> {
+    const history = await this.session.sendToTarget<{
+      currentIndex: number;
+      entries: Array<{ id: number }>;
+    }>(this.targetId, "Page.getNavigationHistory");
+
+    if (history.currentIndex <= 0) {
+      return false;
+    }
+
+    const entry = history.entries[history.currentIndex - 1];
+    if (!entry) return false;
+
+    await this.session.sendToTarget(this.targetId, "Page.navigateToHistoryEntry", {
+      entryId: entry.id,
+    });
+    await this.waitForStablePage(5_000).catch(() => {
+      // best-effort stabilization
+    });
+    return true;
+  }
+
+  async goForward(): Promise<boolean> {
+    const history = await this.session.sendToTarget<{
+      currentIndex: number;
+      entries: Array<{ id: number }>;
+    }>(this.targetId, "Page.getNavigationHistory");
+
+    const nextIndex = history.currentIndex + 1;
+    const entry = history.entries[nextIndex];
+    if (!entry) {
+      return false;
+    }
+
+    await this.session.sendToTarget(this.targetId, "Page.navigateToHistoryEntry", {
+      entryId: entry.id,
+    });
+    await this.waitForStablePage(5_000).catch(() => {
+      // best-effort stabilization
+    });
+    return true;
+  }
+
+  async refresh(): Promise<void> {
+    await this.session.sendToTarget(this.targetId, "Page.reload", {
+      ignoreCache: false,
+    });
+    await this.waitForStablePage(8_000).catch(() => {
+      // best-effort stabilization
+    });
+  }
+
+  private async appearsEmptyPage(): Promise<boolean> {
+    return this.evaluate<boolean>(`(() => {
+      const body = document.body;
+      if (!body) return true;
+
+      const text = (body.innerText || "").trim();
+      const hasText = text.length > 0;
+
+      const interactive = body.querySelectorAll(
+        'a,button,input,select,textarea,[role="button"],[role="link"],[tabindex]'
+      ).length;
+
+      return !hasText && interactive === 0;
+    })()`);
+  }
+
+  async navigateWithHealthCheck(url: string): Promise<NavigationHealthResult> {
+    await this.goto(url);
+
+    const isHttp = url.startsWith("http://") || url.startsWith("https://");
+    if (!isHttp) {
+      return { ok: true };
+    }
+
+    let empty = await this.appearsEmptyPage().catch(() => false);
+    if (!empty) {
+      return { ok: true };
+    }
+
+    await delay(3_000);
+    empty = await this.appearsEmptyPage().catch(() => false);
+    if (!empty) {
+      return { ok: true };
+    }
+
+    await this.goto(url);
+    await delay(5_000);
+    empty = await this.appearsEmptyPage().catch(() => false);
+    if (empty) {
+      return {
+        ok: false,
+        warning:
+          "Page loaded but returned empty content. It may require anti-bot measures, failed JavaScript rendering, or have connection/proxy issues.",
+      };
+    }
+
+    return { ok: true };
+  }
+
+  async evaluate<TResult = unknown>(expression: string): Promise<TResult> {
+    const result = await this.session.sendToTarget<{
+      result: { value?: TResult };
+      exceptionDetails?: {
+        text?: string;
+        lineNumber?: number;
+        columnNumber?: number;
+        exception?: { description?: string; value?: unknown };
+      };
+    }>(this.targetId, "Runtime.evaluate", {
+      expression,
+      returnByValue: true,
+      awaitPromise: true,
+    });
+
+    if (result.exceptionDetails) {
+      const details = result.exceptionDetails;
+      const line = typeof details.lineNumber === "number" ? ` at ${details.lineNumber + 1}` : "";
+      const column = typeof details.columnNumber === "number" ? `:${details.columnNumber + 1}` : "";
+      const description =
+        details.exception?.description ??
+        (typeof details.exception?.value === "string" ? details.exception.value : undefined);
+      throw new Error(
+        `Runtime evaluation failed: ${details.text ?? "unknown error"}${line}${column}${description ? ` — ${description}` : ""}`,
+      );
+    }
+
+    return result.result.value as TResult;
+  }
+
+  async evaluateHandle(expression: string): Promise<string> {
+    const result = await this.session.sendToTarget<{
+      result: { objectId?: string };
+      exceptionDetails?: {
+        text?: string;
+        lineNumber?: number;
+        columnNumber?: number;
+        exception?: { description?: string; value?: unknown };
+      };
+    }>(this.targetId, "Runtime.evaluate", {
+      expression,
+      returnByValue: false,
+      awaitPromise: true,
+    });
+
+    if (result.exceptionDetails) {
+      const details = result.exceptionDetails;
+      const line = typeof details.lineNumber === "number" ? ` at ${details.lineNumber + 1}` : "";
+      const column = typeof details.columnNumber === "number" ? `:${details.columnNumber + 1}` : "";
+      const description =
+        details.exception?.description ??
+        (typeof details.exception?.value === "string" ? details.exception.value : undefined);
+      throw new Error(
+        `Runtime evaluation handle failed: ${details.text ?? "unknown error"}${line}${column}${description ? ` — ${description}` : ""}`,
+      );
+    }
+
+    if (!result.result.objectId) {
+      throw new Error("Runtime evaluation did not return an object handle");
+    }
+
+    return result.result.objectId;
+  }
+
+  async clickByIndex(index: number): Promise<boolean> {
+    return this.evaluate<boolean>(`(() => {
+      const el = document.querySelector('[data-agent-idx="${index}"]');
+      if (!el) return false;
+      el.scrollIntoView({ block: "center", inline: "center" });
+      if (typeof el.click === "function") {
+        el.click();
+        return true;
+      }
+      el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      return true;
+    })()`);
+  }
+
+  async clickAtCoordinates(x: number, y: number): Promise<void> {
+    await this.session.sendToTarget(this.targetId, "Input.dispatchMouseEvent", {
+      type: "mouseMoved",
+      x,
+      y,
+      button: "none",
+      clickCount: 0,
+    });
+    await this.session.sendToTarget(this.targetId, "Input.dispatchMouseEvent", {
+      type: "mousePressed",
+      x,
+      y,
+      button: "left",
+      clickCount: 1,
+    });
+    await this.session.sendToTarget(this.targetId, "Input.dispatchMouseEvent", {
+      type: "mouseReleased",
+      x,
+      y,
+      button: "left",
+      clickCount: 1,
+    });
+  }
+
+  async typeByIndex(index: number, text: string, submit = false): Promise<boolean> {
+    const escapedText = JSON.stringify(text);
+    return this.evaluate<boolean>(`(() => {
+      const el = document.querySelector('[data-agent-idx="${index}"]');
+      if (!el) return false;
+
+      const tag = el.tagName;
+      const isInputLike = tag === "INPUT" || tag === "TEXTAREA";
+      if (!isInputLike && !el.isContentEditable) return false;
+
+      el.focus();
+
+      if (el.isContentEditable) {
+        el.textContent = ${escapedText};
+      } else {
+        const nativeSetter = Object.getOwnPropertyDescriptor(
+          tag === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype,
+          "value",
+        )?.set;
+        if (nativeSetter) {
+          nativeSetter.call(el, ${escapedText});
+        } else {
+          el.value = ${escapedText};
+        }
+      }
+
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+
+      if (${submit ? "true" : "false"}) {
+        const form = el.form;
+        if (form) {
+          form.requestSubmit ? form.requestSubmit() : form.submit();
+        } else {
+          el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+          el.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", bubbles: true }));
+        }
+      }
+
+      return true;
+    })()`);
+  }
+
+  async selectOptionByIndex(index: number, valueOrLabel: string): Promise<boolean> {
+    const escaped = JSON.stringify(valueOrLabel);
+    return this.evaluate<boolean>(`(() => {
+      const el = document.querySelector('[data-agent-idx="${index}"]');
+      if (!el || el.tagName !== "SELECT") return false;
+      const select = el;
+      const options = Array.from(select.options || []);
+      const byValue = options.find((opt) => opt.value === ${escaped});
+      const byLabel = options.find((opt) => (opt.label || opt.textContent || "").trim() === ${escaped});
+      const match = byValue || byLabel;
+      if (!match) return false;
+      select.value = match.value;
+      select.dispatchEvent(new Event("input", { bubbles: true }));
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      return true;
+    })()`);
+  }
+
+  async sendKeys(keys: string): Promise<void> {
+    const tokens = keys
+      .split("+")
+      .map((token) => token.trim())
+      .filter((token) => token.length > 0);
+
+    if (tokens.length === 0) {
+      throw new Error("sendKeys requires non-empty key string");
+    }
+
+    const modifiers = new Set<string>();
+    for (const token of tokens.slice(0, -1)) {
+      const normalized = token.toLowerCase();
+      if (normalized === "control" || normalized === "ctrl") modifiers.add("Control");
+      if (normalized === "shift") modifiers.add("Shift");
+      if (normalized === "alt") modifiers.add("Alt");
+      if (normalized === "meta" || normalized === "command") modifiers.add("Meta");
+    }
+
+    const modifierMask =
+      (modifiers.has("Alt") ? 1 : 0) |
+      (modifiers.has("Control") ? 2 : 0) |
+      (modifiers.has("Meta") ? 4 : 0) |
+      (modifiers.has("Shift") ? 8 : 0);
+
+    const mainKey = tokens[tokens.length - 1] as string;
+
+    for (const modifier of modifiers) {
+      await this.session.sendToTarget(this.targetId, "Input.dispatchKeyEvent", {
+        type: "keyDown",
+        key: modifier,
+        modifiers: modifierMask,
+      });
+    }
+
+    await this.session.sendToTarget(this.targetId, "Input.dispatchKeyEvent", {
+      type: "keyDown",
+      key: mainKey,
+      modifiers: modifierMask,
+    });
+    await this.session.sendToTarget(this.targetId, "Input.dispatchKeyEvent", {
+      type: "keyUp",
+      key: mainKey,
+      modifiers: modifierMask,
+    });
+
+    for (const modifier of Array.from(modifiers).reverse()) {
+      await this.session.sendToTarget(this.targetId, "Input.dispatchKeyEvent", {
+        type: "keyUp",
+        key: modifier,
+        modifiers: modifierMask,
+      });
+    }
+  }
+
+  async uploadFilesByIndex(index: number, filePaths: string[]): Promise<boolean> {
+    if (filePaths.length === 0) {
+      throw new Error("uploadFilesByIndex requires at least one file path");
+    }
+
+    const handle = await this.evaluateHandle(
+      `(() => document.querySelector('[data-agent-idx="${index}"]'))()`,
+    ).catch(() => null);
+    if (!handle) return false;
+
+    try {
+      const node = await this.session.sendToTarget<{ nodeId?: number }>(
+        this.targetId,
+        "DOM.requestNode",
+        {
+          objectId: handle,
+        },
+      );
+      if (!node.nodeId) return false;
+
+      await this.session.sendToTarget(this.targetId, "DOM.setFileInputFiles", {
+        nodeId: node.nodeId,
+        files: filePaths,
+      });
+      return true;
+    } finally {
+      await this.session
+        .sendToTarget(this.targetId, "Runtime.releaseObject", {
+          objectId: handle,
+        })
+        .catch(() => {
+          // ignore release failures
+        });
+    }
+  }
+
+  async scroll(
+    direction: "up" | "down" | "top" | "bottom",
+    amount = 800,
+    index?: number,
+  ): Promise<void> {
+    const expr =
+      direction === "up"
+        ? index !== undefined
+          ? `(() => { const el = document.querySelector('[data-agent-idx="${index}"]'); if (el) el.scrollBy(0, -${amount}); })()`
+          : `window.scrollBy(0, -${amount})`
+        : direction === "down"
+          ? index !== undefined
+            ? `(() => { const el = document.querySelector('[data-agent-idx="${index}"]'); if (el) el.scrollBy(0, ${amount}); })()`
+            : `window.scrollBy(0, ${amount})`
+          : direction === "top"
+            ? index !== undefined
+              ? `(() => { const el = document.querySelector('[data-agent-idx="${index}"]'); if (el) el.scrollTop = 0; })()`
+              : "window.scrollTo(0, 0)"
+            : index !== undefined
+              ? `(() => { const el = document.querySelector('[data-agent-idx="${index}"]'); if (el) el.scrollTop = el.scrollHeight; })()`
+              : "window.scrollTo(0, document.body.scrollHeight)";
+    await this.evaluate(expr);
+  }
+
+  async scrollByPages(
+    direction: "up" | "down" | "top" | "bottom",
+    pages = 1.0,
+    index?: number,
+  ): Promise<void> {
+    const viewportHeight = await this.evaluate<number>("window.innerHeight || 1000").catch(
+      () => 1000,
+    );
+    if (direction === "top" || direction === "bottom") {
+      await this.scroll(direction, viewportHeight, index);
+      return;
+    }
+
+    const fullPages = Math.max(0, Math.floor(pages));
+    const fractional = Math.max(0, pages - fullPages);
+
+    for (let i = 0; i < fullPages; i += 1) {
+      await this.scroll(direction, viewportHeight, index);
+      await delay(150);
+    }
+
+    if (fractional > 0) {
+      await this.scroll(direction, Math.max(1, Math.floor(fractional * viewportHeight)), index);
+    }
+  }
+
+  async waitForText(text: string, timeoutMs = 10_000): Promise<boolean> {
+    const escaped = JSON.stringify(text);
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+      const found = await this.evaluate<boolean>(
+        `document.body?.innerText?.includes(${escaped}) ?? false`,
+      );
+      if (found) return true;
+      await delay(100);
+    }
+    return false;
+  }
+
+  async scrollToText(text: string): Promise<boolean> {
+    const escaped = JSON.stringify(text);
+    return this.evaluate<boolean>(`(() => {
+      const search = ${escaped};
+      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+      while (walker.nextNode()) {
+        const node = walker.currentNode;
+        const value = (node.textContent || '').trim();
+        if (!value) continue;
+        if (!value.toLowerCase().includes(String(search).toLowerCase())) continue;
+        const el = node.parentElement;
+        if (!el) continue;
+        el.scrollIntoView({ behavior: 'instant', block: 'center', inline: 'center' });
+        return true;
+      }
+      return false;
+    })()`);
+  }
+
+  async getPendingNetworkRequests(limit = 20): Promise<PendingNetworkRequest[]> {
+    const data = await this.evaluate<{
+      pending_requests: Array<{
+        url: string;
+        method?: string;
+        loading_duration_ms?: number;
+        resource_type?: string;
+      }>;
+    }>(`(() => {
+      const now = performance.now();
+      const resources = performance.getEntriesByType('resource');
+      const pending = [];
+      const adDomains = [
+        'doubleclick.net', 'googlesyndication.com', 'googletagmanager.com',
+        'facebook.net', 'analytics', 'ads', 'tracking', 'pixel',
+        'hotjar.com', 'clarity.ms', 'mixpanel.com', 'segment.com',
+        'demdex.net', 'omtrdc.net', 'adobedtm.com', 'ensighten.com',
+        'newrelic.com', 'nr-data.net', 'google-analytics.com',
+        'connect.facebook.net', 'platform.twitter.com', 'platform.linkedin.com',
+        '.cloudfront.net/image/', '.akamaized.net/image/',
+        '/tracker/', '/collector/', '/beacon/', '/telemetry/', '/log/',
+        '/events/', '/eventBatch', '/track.', '/metrics/'
+      ];
+
+      for (const entry of resources) {
+        if (entry.responseEnd !== 0) continue;
+        const url = entry.name;
+        if (adDomains.some((domain) => url.includes(domain))) continue;
+        if (url.startsWith('data:') || url.length > 500) continue;
+
+        const loadingDuration = now - entry.startTime;
+        if (loadingDuration > 10000) continue;
+
+        const resourceType = entry.initiatorType || 'unknown';
+        const nonCriticalTypes = ['img', 'image', 'icon', 'font'];
+        if (nonCriticalTypes.includes(resourceType) && loadingDuration > 3000) continue;
+        if (/\\.(jpg|jpeg|png|gif|webp|svg|ico)(\\?|$)/i.test(url) && loadingDuration > 3000) continue;
+
+        pending.push({
+          url,
+          method: 'GET',
+          loading_duration_ms: Math.round(loadingDuration),
+          resource_type: resourceType,
+        });
+      }
+
+      return { pending_requests: pending };
+    })()`);
+
+    return (data.pending_requests ?? []).slice(0, limit).map((req) => ({
+      url: req.url,
+      method: req.method ?? "GET",
+      loadingDurationMs: req.loading_duration_ms ?? 0,
+      resourceType: req.resource_type ?? "unknown",
+    }));
+  }
+
+  async waitForStablePage(timeoutMs = 3_000): Promise<void> {
+    const startedAt = Date.now();
+    let stablePolls = 0;
+    while (Date.now() - startedAt < timeoutMs) {
+      const status = await this.evaluate<{ readyState: string; pendingCount: number }>(`(() => {
+        const resources = performance.getEntriesByType('resource');
+        let pendingCount = 0;
+        for (const entry of resources) {
+          if (entry.responseEnd === 0) pendingCount += 1;
+        }
+        return { readyState: document.readyState, pendingCount };
+      })()`);
+
+      if (status.readyState === "complete" && status.pendingCount === 0) {
+        stablePolls += 1;
+        if (stablePolls >= 2) return;
+      } else {
+        stablePolls = 0;
+      }
+      await delay(120);
+    }
+  }
+
+  async searchPage(params: SearchPageParams): Promise<{
+    total: number;
+    hasMore: boolean;
+    matches: Array<{
+      matchText: string;
+      context: string;
+      elementPath: string;
+      charPosition: number;
+    }>;
+  }> {
+    const payload = {
+      pattern: params.pattern,
+      regex: params.regex ?? false,
+      caseSensitive: params.caseSensitive ?? false,
+      contextChars: params.contextChars ?? 150,
+      cssScope: params.cssScope ?? null,
+      maxResults: params.maxResults ?? 25,
+    };
+
+    return this.evaluate(`(() => {
+      const p = ${JSON.stringify(payload)};
+      const scope = p.cssScope ? document.querySelector(p.cssScope) : document.body;
+      if (!scope) return { total: 0, hasMore: false, matches: [] };
+
+      const walker = document.createTreeWalker(scope, NodeFilter.SHOW_TEXT);
+      let fullText = "";
+      const nodeOffsets = [];
+      while (walker.nextNode()) {
+        const node = walker.currentNode;
+        const text = node.textContent || "";
+        if (!text.trim()) continue;
+        nodeOffsets.push({ offset: fullText.length, length: text.length, node });
+        fullText += text;
+      }
+
+      let re;
+      try {
+        const flags = p.caseSensitive ? 'g' : 'gi';
+        const escapeRegex = (v) => {
+          let out = '';
+          const specials = '.*+?^$()|[]\\\\';
+          for (const ch of String(v)) {
+            if (specials.includes(ch)) out += '\\\\' + ch;
+            else out += ch;
+          }
+          return out;
+        };
+        re = p.regex ? new RegExp(p.pattern, flags) : new RegExp(escapeRegex(p.pattern), flags);
+      } catch {
+        return { total: 0, hasMore: false, matches: [] };
+      }
+
+      const matches = [];
+      let total = 0;
+      let match;
+      while ((match = re.exec(fullText)) !== null) {
+        total += 1;
+        if (matches.length < p.maxResults) {
+          const start = Math.max(0, match.index - p.contextChars);
+          const end = Math.min(fullText.length, match.index + match[0].length + p.contextChars);
+          const context = (start > 0 ? '...' : '') + fullText.slice(start, end) + (end < fullText.length ? '...' : '');
+
+          let elementPath = '';
+          for (const offset of nodeOffsets) {
+            if (offset.offset <= match.index && offset.offset + offset.length > match.index) {
+              const el = offset.node.parentElement;
+              const parts = [];
+              let current = el;
+              while (current && current !== document.body && current !== document.documentElement) {
+                let desc = current.tagName.toLowerCase();
+                if (current.id) desc += '#' + current.id;
+                parts.unshift(desc);
+                current = current.parentElement;
+              }
+              elementPath = parts.join(' > ');
+              break;
+            }
+          }
+
+          matches.push({
+            matchText: match[0],
+            context,
+            elementPath,
+            charPosition: match.index,
+          });
+        }
+
+        if (match[0].length === 0) re.lastIndex += 1;
+      }
+
+      return { total, hasMore: total > p.maxResults, matches };
+    })()`);
+  }
+
+  async findElements(params: FindElementsParams): Promise<{
+    total: number;
+    showing: number;
+    elements: Array<{
+      index: number;
+      tag: string;
+      text?: string;
+      attrs?: Record<string, string>;
+      childrenCount: number;
+    }>;
+  }> {
+    const payload = {
+      selector: params.selector,
+      attributes: params.attributes ?? null,
+      maxResults: params.maxResults ?? 50,
+      includeText: params.includeText ?? true,
+    };
+
+    return this.evaluate(`(() => {
+      const p = ${JSON.stringify(payload)};
+      let nodeList;
+      try {
+        nodeList = document.querySelectorAll(p.selector);
+      } catch {
+        return { total: 0, showing: 0, elements: [] };
+      }
+
+      const total = nodeList.length;
+      const showing = Math.min(total, p.maxResults);
+      const elements = [];
+      for (let i = 0; i < showing; i += 1) {
+        const el = nodeList[i];
+        const item = {
+          index: i,
+          tag: el.tagName.toLowerCase(),
+          childrenCount: el.children.length,
+        };
+        if (p.includeText) {
+          const text = (el.textContent || '').trim();
+          item.text = text.length > 300 ? text.slice(0, 300) + '...' : text;
+        }
+        if (Array.isArray(p.attributes) && p.attributes.length > 0) {
+          item.attrs = {};
+          for (const attr of p.attributes) {
+            const val = (attr === 'src' || attr === 'href') && typeof el[attr] === 'string' ? el[attr] : el.getAttribute(attr);
+            if (val != null) {
+              item.attrs[attr] = val.length > 500 ? val.slice(0, 500) + '...' : val;
+            }
+          }
+        }
+        elements.push(item);
+      }
+
+      return { total, showing, elements };
+    })()`);
+  }
+
+  async extractContent(params: ExtractContentParams): Promise<ExtractContentResult> {
+    const payload = {
+      query: params.query,
+      extractLinks: params.extractLinks ?? false,
+      extractImages: params.extractImages ?? false,
+      startFromChar: params.startFromChar ?? 0,
+      maxChars: params.maxChars ?? 100_000,
+    };
+
+    return this.evaluate(`(() => {
+      const p = ${JSON.stringify(payload)};
+      const title = (document.title || '').trim();
+      const url = location.href;
+      const body = document.body;
+
+      const lines = [];
+      const collapseWhitespace = (value) => {
+        let out = '';
+        let previousWasSpace = false;
+        for (const ch of String(value || '')) {
+          const isSpace = ch === ' ' || ch === '\\n' || ch === '\\r' || ch === '\\t' || ch === '\\f';
+          if (isSpace) {
+            if (!previousWasSpace) {
+              out += ' ';
+              previousWasSpace = true;
+            }
+          } else {
+            out += ch;
+            previousWasSpace = false;
+          }
+        }
+        return out.trim();
+      };
+
+      if (title) {
+        lines.push('# ' + title, '');
+      }
+
+      const text = (body?.innerText || '').replace(/\\n{3,}/g, '\\n\\n').trim();
+      if (text) {
+        lines.push(text);
+      }
+
+      const linkEntries = [];
+      if (p.extractLinks && body) {
+        const seen = new Set();
+        for (const a of Array.from(body.querySelectorAll('a[href]'))) {
+          const href = (a.getAttribute('href') || '').trim();
+          if (!href) continue;
+          const absHref = (() => {
+            try {
+              return new URL(href, location.href).toString();
+            } catch {
+              return href;
+            }
+          })();
+          if (seen.has(absHref)) continue;
+          seen.add(absHref);
+          const label = collapseWhitespace(a.textContent || a.getAttribute('aria-label') || '');
+          linkEntries.push({ href: absHref, text: label || absHref });
+        }
+      }
+
+      const imageEntries = [];
+      if (p.extractImages && body) {
+        const seen = new Set();
+        for (const img of Array.from(body.querySelectorAll('img[src]'))) {
+          const src = (img.getAttribute('src') || '').trim();
+          if (!src) continue;
+          const absSrc = (() => {
+            try {
+              return new URL(src, location.href).toString();
+            } catch {
+              return src;
+            }
+          })();
+          if (seen.has(absSrc)) continue;
+          seen.add(absSrc);
+          const alt = collapseWhitespace(img.getAttribute('alt') || '');
+          imageEntries.push({ src: absSrc, alt });
+        }
+      }
+
+      if (linkEntries.length > 0) {
+        lines.push('', '## Links', '');
+        for (const item of linkEntries) {
+          lines.push('- [' + item.text + '](' + item.href + ')');
+        }
+      }
+
+      if (imageEntries.length > 0) {
+        lines.push('', '## Images', '');
+        for (const item of imageEntries) {
+          lines.push('- ![' + (item.alt || 'image') + '](' + item.src + ')');
+        }
+      }
+
+      const fullContent = lines.join('\\n').trim();
+      const totalChars = fullContent.length;
+      const start = Math.min(Math.max(0, p.startFromChar), totalChars);
+      const end = Math.min(totalChars, start + p.maxChars);
+      const chunk = fullContent.slice(start, end);
+      const truncated = end < totalChars;
+
+      return {
+        url,
+        query: p.query,
+        content: chunk,
+        stats: {
+          totalChars,
+          startFromChar: start,
+          returnedChars: chunk.length,
+          truncated,
+          nextStartChar: truncated ? end : null,
+          linksCount: linkEntries.length,
+          imagesCount: imageEntries.length,
+        },
+      };
+    })()`);
+  }
+
+  async getDropdownOptionsByIndex(index: number): Promise<Array<{ value: string; text: string }>> {
+    return this.evaluate(`(() => {
+      const el = document.querySelector('[data-agent-idx="${index}"]');
+      if (!el || el.tagName !== 'SELECT') return [];
+      const options = [];
+      for (const option of Array.from(el.options || [])) {
+        options.push({ value: option.value, text: (option.label || option.textContent || '').trim() });
+      }
+      return options;
+    })()`);
+  }
+
+  async waitForTimeout(ms: number): Promise<void> {
+    await delay(ms);
+  }
+
+  async currentUrl(): Promise<string> {
+    return this.evaluate<string>("location.href");
+  }
+
+  async close(): Promise<void> {
+    await this.session.closePage(this.targetId);
+  }
+
+  async title(): Promise<string> {
+    return this.evaluate<string>("document.title");
+  }
+
+  async content(): Promise<string> {
+    return this.evaluate<string>("document.documentElement.outerHTML");
+  }
+
+  async screenshot(): Promise<string> {
+    const result = await this.session.sendToTarget<{ data: string }>(
+      this.targetId,
+      "Page.captureScreenshot",
+      { format: "png" },
+    );
+    return result.data;
+  }
+
+  async screenshotToFile(fileName?: string): Promise<string> {
+    const base64 = await this.screenshot();
+    const safeName = (
+      fileName && fileName.trim().length > 0 ? fileName.trim() : `screenshot-${Date.now()}.png`
+    ).replace(/[\\/:*?"<>|]/g, "_");
+    const finalName = safeName.toLowerCase().endsWith(".png") ? safeName : `${safeName}.png`;
+    const outputPath = join(process.cwd(), finalName);
+    mkdirSync(dirname(outputPath), { recursive: true });
+    const bytes = Buffer.from(base64, "base64");
+    await Bun.write(outputPath, bytes);
+    return outputPath;
+  }
+
+  async saveAsPdf(options?: {
+    fileName?: string;
+    printBackground?: boolean;
+    landscape?: boolean;
+    scale?: number;
+    paperFormat?: "Letter" | "Legal" | "A4" | "A3" | "Tabloid";
+  }): Promise<string> {
+    const paperSizes: Record<string, { width: number; height: number }> = {
+      letter: { width: 8.5, height: 11 },
+      legal: { width: 8.5, height: 14 },
+      a4: { width: 8.27, height: 11.69 },
+      a3: { width: 11.69, height: 16.54 },
+      tabloid: { width: 11, height: 17 },
+    };
+
+    const selected = (options?.paperFormat ?? "Letter").toLowerCase();
+    const fallbackPaper = paperSizes.letter;
+    const paper = paperSizes[selected] ?? fallbackPaper;
+    if (!paper) {
+      throw new Error("Missing paper size configuration");
+    }
+    const scale = options?.scale ?? 1;
+
+    const result = await this.session.sendToTarget<{ data: string }>(
+      this.targetId,
+      "Page.printToPDF",
+      {
+        printBackground: options?.printBackground ?? true,
+        landscape: options?.landscape ?? false,
+        scale: Math.min(2, Math.max(0.1, scale)),
+        paperWidth: paper.width,
+        paperHeight: paper.height,
+        preferCSSPageSize: true,
+      },
+    );
+
+    const rawFileName = options?.fileName?.trim() || `page-${Date.now()}.pdf`;
+    const safeName = rawFileName.replace(/[\\/:*?"<>|]/g, "_");
+    const finalName = safeName.toLowerCase().endsWith(".pdf") ? safeName : `${safeName}.pdf`;
+    const outputPath = join(process.cwd(), finalName);
+    mkdirSync(dirname(outputPath), { recursive: true });
+    await Bun.write(outputPath, Buffer.from(result.data, "base64"));
+    return outputPath;
+  }
+}

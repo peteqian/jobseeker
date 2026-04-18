@@ -1,0 +1,19 @@
+import { runAgent } from "../src/index";
+
+const task =
+  process.argv[2] ?? "Go to https://example.com and report the H1 text via done(data=...).";
+
+const result = await runAgent({
+  task,
+  startUrl: "about:blank",
+  maxSteps: 15,
+  launch: { headless: true },
+  onStep: (step) => {
+    const summary = step.action.name === "done" ? "" : ` -> ${step.result.message}`;
+    console.log(
+      `[${step.step}] ${step.action.name}(${JSON.stringify(step.action.params)})${summary}`,
+    );
+  },
+});
+
+console.log("RESULT:", JSON.stringify(result, null, 2));

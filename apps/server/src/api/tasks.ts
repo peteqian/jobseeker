@@ -3,6 +3,7 @@ import { asc, desc, eq } from "drizzle-orm";
 import type {
   ChatModelSelection,
   QuestionCard,
+  RuntimeEventType,
   StartTaskInput,
   StructuredProfile,
   TaskRecord,
@@ -10,11 +11,21 @@ import type {
 
 import { makeId } from "../lib/ids";
 import { createProjectSlug } from "../lib/paths";
+import { logError, logInfo } from "../lib/log";
 import { buildProfileFromResume } from "../services/profile";
+import { runExplorerDiscovery } from "../services/explorer";
 import { buildQuestionCardTemplates } from "../prompts/questions";
 import { questionCardPath, writeQuestionCardFile } from "../services/questions";
 import { db } from "../db";
-import { documents, profiles, projects, questionAnswers, questionCards, tasks } from "../db/schema";
+import {
+  documents,
+  events,
+  profiles,
+  projects,
+  questionAnswers,
+  questionCards,
+  tasks,
+} from "../db/schema";
 
 const now = () => new Date().toISOString();
 
@@ -160,12 +171,56 @@ async function ensureQuestionCards(projectId: string, taskId: string, timestamp:
   return cards.length;
 }
 
+interface TaskRunResult {
+  jobsCreated?: number;
+  domainsProcessed?: number;
+  queriesRun?: number;
+}
+
+async function runTask(
+  input: StartTaskInput,
+  taskId: string,
+  timestamp: string,
+): Promise<TaskRunResult> {
+  if (input.type === "resume_ingest") {
+    await buildAndSaveProfile(input.projectId, input.modelSelection);
+    await ensureQuestionCards(input.projectId, taskId, timestamp);
+    return {};
+  }
+
+  if (input.type === "explorer_discovery") {
+    const result = await runExplorerDiscovery(input.projectId, {
+      onProgress: (progress) =>
+        writeEvent(input.projectId, "task.progress", {
+          taskId,
+          taskType: input.type,
+          ...progress,
+        }),
+    });
+    return result;
+  }
+
+  return {};
+}
+
+async function writeEvent(projectId: string, type: RuntimeEventType, payload: unknown) {
+  const createdAt = now();
+  await db.insert(events).values({
+    id: makeId("event"),
+    projectId,
+    type,
+    createdAt,
+    payloadJson: JSON.stringify(payload ?? {}),
+  });
+}
+
 export function registerTaskRoutes(app: Hono) {
   app.post("/api/tasks", async (c) => {
     const input = (await c.req.json()) as StartTaskInput;
     const timestamp = now();
     const taskId = makeId("task");
     let taskStatus: TaskRecord["status"] = "running";
+    let taskError: string | null = null;
 
     await db.insert(tasks).values({
       id: taskId,
@@ -177,17 +232,54 @@ export function registerTaskRoutes(app: Hono) {
       updatedAt: timestamp,
       error: null,
     });
+    await writeEvent(input.projectId, "task.started", {
+      taskId,
+      taskType: input.type,
+      status: "running",
+    });
 
-    if (input.type === "resume_ingest") {
-      await buildAndSaveProfile(input.projectId, input.modelSelection);
-      await ensureQuestionCards(input.projectId, taskId, timestamp);
+    logInfo("task started", {
+      taskId,
+      projectId: input.projectId,
+      type: input.type,
+    });
+
+    try {
+      const result = await runTask(input, taskId, timestamp);
       taskStatus = "completed";
+      await writeEvent(input.projectId, "task.completed", {
+        taskId,
+        taskType: input.type,
+      });
+      if (input.type === "explorer_discovery") {
+        await writeEvent(input.projectId, "jobs.updated", {
+          taskId,
+          jobsCreated: result.jobsCreated ?? 0,
+          domainsProcessed: result.domainsProcessed ?? 0,
+          queriesRun: result.queriesRun ?? 0,
+        });
+      }
+    } catch (error) {
+      taskStatus = "failed";
+      taskError = error instanceof Error ? error.message : String(error);
 
-      await db
-        .update(tasks)
-        .set({ status: taskStatus, updatedAt: now() })
-        .where(eq(tasks.id, taskId));
+      logError("task failed", {
+        taskId,
+        projectId: input.projectId,
+        type: input.type,
+        error,
+      });
+      await writeEvent(input.projectId, "task.failed", {
+        taskId,
+        taskType: input.type,
+        error: taskError,
+      });
     }
+
+    await db
+      .update(tasks)
+      .set({ status: taskStatus, updatedAt: now(), error: taskError })
+      .where(eq(tasks.id, taskId));
 
     return c.json(
       {
@@ -195,8 +287,9 @@ export function registerTaskRoutes(app: Hono) {
         projectId: input.projectId,
         type: input.type,
         status: taskStatus,
+        error: taskError,
         createdAt: timestamp,
-        updatedAt: taskStatus === "completed" ? now() : timestamp,
+        updatedAt: now(),
       },
       201,
     );

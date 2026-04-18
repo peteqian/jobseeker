@@ -1,0 +1,45 @@
+{
+  "name": "@jobseeker/browser-agent",
+  "version": "0.0.1",
+  "private": true,
+  "description": "TypeScript browser automation agent. Raw CDP + LLM loop, inspired by browser-use.",
+  "keywords": [
+    "agent",
+    "automation",
+    "browser",
+    "cdp",
+    "chrome-devtools",
+    "llm",
+    "mcp"
+  ],
+  "license": "MIT",
+  "bin": {
+    "browser-agent": "./bin/cli.ts",
+    "browser-agent-mcp": "./bin/mcp.ts"
+  },
+  "type": "module",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "cli": "bun run bin/cli.ts",
+    "mcp": "bun run bin/mcp.ts",
+    "example:goto": "bun run examples/goto.ts",
+    "example:agent": "bun run examples/agent.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "devtools-protocol": "^0.0.1617013",
+    "ws": "^8.20.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.1",
+    "typescript": "^5.9.3"
+  }
+}

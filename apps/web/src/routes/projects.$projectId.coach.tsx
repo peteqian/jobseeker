@@ -1,12 +1,10 @@
 import type { TopicFileMeta } from "@jobseeker/contracts";
-import { AlertCircle } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import { Link, createFileRoute } from "@tanstack/react-router";
 
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button-variants";
-import { ChatInput } from "@/components/chat/chat-input";
-import { ChatMessageList } from "@/components/chat/chat-message-list";
+import { ChatPanel } from "@/components/chat/chat-panel";
 import { TopicArtifactPanel } from "@/components/chat/topic-artifact-panel";
 
 import { useModelChoice } from "@/hooks/use-model-choice";
@@ -145,22 +143,12 @@ function ChatPage() {
           </Link>
         </div>
 
-        {error ? (
-          <div className="mx-4 mt-3 flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-            <AlertCircle className="size-4 shrink-0" />
-            {error}
-          </div>
-        ) : null}
-
-        <ChatMessageList
+        <ChatPanel
           messages={messages}
           streamingContent={streamingContent}
           isStreaming={isStreaming}
-        />
-
-        <ChatInput
+          error={error}
           onSend={send}
-          disabled={isStreaming}
           providers={providers}
           selection={selection}
           onSelectionChange={setSelection}

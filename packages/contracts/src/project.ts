@@ -1,7 +1,7 @@
 import type { ChatMessage, InsightCard } from "./chat";
 import type { TopicFileMeta } from "./topic";
 import type {
-  ExplorerPresetId,
+  ExplorerFreshness,
   JobSource,
   RuntimeEventType,
   TaskStatus,
@@ -12,12 +12,26 @@ import type {
 import type { StructuredProfile } from "./profile";
 import type { QuestionAnswerRecord, QuestionCard, PendingQuestion } from "./questions";
 
+export interface ExplorerDomainConfig {
+  domain: string;
+  enabled: boolean;
+  jobLimit: number;
+  freshness: ExplorerFreshness;
+  queries: string[];
+}
+
 export interface ExplorerConfigRecord {
   projectId: string;
-  domains: string[];
-  presetIds: ExplorerPresetId[];
+  domains: ExplorerDomainConfig[];
   includeAgentSuggestions: boolean;
   updatedAt: string;
+}
+
+export interface DomainMemory {
+  domain: string;
+  searchHints: string[];
+  extractHints: string[];
+  avoidHints: string[];
 }
 
 export interface ProjectRecord {
@@ -122,8 +136,7 @@ export interface ResumePasteInput {
 }
 
 export interface UpdateExplorerConfigInput {
-  domains: string[];
-  presetIds: ExplorerPresetId[];
+  domains: ExplorerDomainConfig[];
   includeAgentSuggestions: boolean;
 }
 

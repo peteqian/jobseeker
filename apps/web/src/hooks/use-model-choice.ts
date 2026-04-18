@@ -6,7 +6,7 @@ import { listProviders, type ChatProviderResponse } from "@/rpc/chat-client";
 import { useModelChoiceStore } from "@/stores/model-choice-store";
 import type { ChatModelSelection, ProviderId } from "@jobseeker/contracts";
 
-type ModelChoiceScope = "coach" | "profile";
+type ModelChoiceScope = "coach" | "profile" | "explorer";
 
 function toProviderOption(provider: ChatProviderResponse): ProviderOption | null {
   if (provider.id !== "codex" && provider.id !== "claude") {

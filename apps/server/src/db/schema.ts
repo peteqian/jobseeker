@@ -41,7 +41,6 @@ export const explorerConfigs = sqliteTable("explorer_configs", {
     .primaryKey()
     .references(() => projects.id, { onDelete: "cascade" }),
   domainsJson: text("domains_json").notNull(),
-  presetIdsJson: text("preset_ids_json").notNull(),
   includeAgentSuggestions: integer("include_agent_suggestions", {
     mode: "boolean",
   }).notNull(),

@@ -17,19 +17,24 @@ If a tradeoff is required, choose correctness and robustness over short-term con
 
 Long term maintainability is a core priority. If you add new functionality, first check if there is shared logic that can be extracted to a separate module. Duplicate logic across multiple files is a code smell and should be avoided. Don't be afraid to change existing code. Don't take shortcuts by just adding local logic to solve a problem.
 
-## Codex App Server (Important)
+## Current Server Wiring (Important)
 
-JobSeeker is currently Codex-first. The server starts codex app-server (JSON-RPC over stdio) per provider session, then streams structured events to the browser through WebSocket push messages.
+This repository currently uses:
 
-How we use it in this codebase:
+- HTTP API server via Hono in `apps/server/src/bin.ts`
+- WebSocket RPC server via Effect in `apps/server/src/ws.ts`
+- Chat RPC methods from `@jobseeker/contracts` (`ChatRpcGroup`) wired to `ChatService`
 
-Session startup/resume and turn lifecycle are brokered in apps/server/src/codexAppServerManager.ts.
-Provider dispatch and thread event logging are coordinated in apps/server/src/providerManager.ts.
-WebSocket server routes NativeApi methods in apps/server/src/wsServer.ts.
-Web app consumes orchestration domain events via WebSocket push on channel orchestration.domainEvent (provider runtime activity is projected into orchestration events server-side).
-Docs:
+Important notes:
 
-Docs:
+- The files `apps/server/src/codexAppServerManager.ts`, `apps/server/src/providerManager.ts`, and
+  `apps/server/src/wsServer.ts` are not present in the current codebase.
+- There is currently no server-side `codex app-server` session manager module in this repository.
+- Explorer config persistence is handled by `apps/server/src/api/explorer.ts`.
+- Task creation is handled by `apps/server/src/api/tasks.ts`; only `resume_ingest` has execution
+  logic today.
+
+Reference docs:
 
 - Codex App Server docs: <https://developers.openai.com/codex/sdk/#app-server>
 

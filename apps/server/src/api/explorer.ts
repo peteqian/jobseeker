@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { eq } from "drizzle-orm";
-import type { UpdateExplorerConfigInput } from "@jobseeker/contracts";
+import type { ExplorerConfigRecord, UpdateExplorerConfigInput } from "@jobseeker/contracts";
 
 import { db } from "../db";
 import { explorerConfigs } from "../db/schema";
@@ -23,8 +23,7 @@ export function registerExplorerRoutes(app: Hono) {
     return c.json({
       explorer: {
         projectId: config.projectId,
-        domains: JSON.parse(config.domainsJson),
-        presetIds: JSON.parse(config.presetIdsJson),
+        domains: JSON.parse(config.domainsJson) as ExplorerConfigRecord["domains"],
         includeAgentSuggestions: config.includeAgentSuggestions,
         updatedAt: config.updatedAt,
       },
@@ -41,7 +40,6 @@ export function registerExplorerRoutes(app: Hono) {
       .values({
         projectId,
         domainsJson: JSON.stringify(input.domains),
-        presetIdsJson: JSON.stringify(input.presetIds),
         includeAgentSuggestions: input.includeAgentSuggestions,
         updatedAt: timestamp,
       })
@@ -49,7 +47,6 @@ export function registerExplorerRoutes(app: Hono) {
         target: explorerConfigs.projectId,
         set: {
           domainsJson: JSON.stringify(input.domains),
-          presetIdsJson: JSON.stringify(input.presetIds),
           includeAgentSuggestions: input.includeAgentSuggestions,
           updatedAt: timestamp,
         },
@@ -60,7 +57,6 @@ export function registerExplorerRoutes(app: Hono) {
       explorer: {
         projectId,
         domains: input.domains,
-        presetIds: input.presetIds,
         includeAgentSuggestions: input.includeAgentSuggestions,
         updatedAt: timestamp,
       },

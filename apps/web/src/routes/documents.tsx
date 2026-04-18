@@ -38,14 +38,12 @@ interface DocumentRow {
 const documentKindLabels: Record<ProjectDocumentKind, string> = {
   resume_source: "Resume Source",
   extracted_text: "Extracted Text",
-  semantic_profile: "Profile",
   tailored_resume: "Tailored Resume",
 };
 
 const documentKindOrder: ProjectDocumentKind[] = [
   "resume_source",
   "extracted_text",
-  "semantic_profile",
   "tailored_resume",
 ];
 
