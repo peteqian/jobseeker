@@ -52,9 +52,10 @@ function normalizeChoice(
     return undefined;
   }
 
-  const effort = model.capabilities.reasoningEffort.includes(choice.effort)
-    ? choice.effort
-    : model.capabilities.defaultEffort;
+  const effort =
+    typeof choice.effort === "string" && model.capabilities.reasoningEffort.includes(choice.effort)
+      ? choice.effort
+      : model.capabilities.defaultEffort;
 
   return {
     provider: provider.id as ProviderId,

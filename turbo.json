@@ -1,6 +1,16 @@
 {
   "$schema": "https://turbo.build/schema.json",
   "ui": "tui",
+  "globalEnv": [
+    "HOST",
+    "PORT",
+    "CORS_ORIGIN",
+    "VITE_SERVER_URL",
+    "VITE_WS_URL",
+    "VITE_DEV_SERVER_URL",
+    "JOBSEEKER_SERVER_PORT",
+    "JOBSEEKER_WEB_PORT"
+  ],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],

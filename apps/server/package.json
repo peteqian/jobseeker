@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "bun --watch src/bin.ts",
-    "build": "bun build src/bin.ts --target bun --outdir dist",
+    "build": "bun build src/bin.ts --target bun --outfile dist/bin.mjs",
+    "start": "bun dist/bin.mjs",
     "prepare": "effect-language-service patch",
     "fmt": "cd ../.. && oxfmt apps/server/src",
     "fmt:check": "cd ../.. && oxfmt --check apps/server/src",

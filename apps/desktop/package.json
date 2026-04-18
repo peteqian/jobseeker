@@ -1,0 +1,50 @@
+{
+  "name": "desktop",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "dist-electron/main.cjs",
+  "scripts": {
+    "dev": "bun run --parallel dev:bundle dev:electron",
+    "dev:bundle": "tsdown --watch",
+    "dev:electron": "node scripts/dev-electron.mjs",
+    "build": "tsdown",
+    "start": "node scripts/start-electron.mjs",
+    "typecheck": "tsc --noEmit",
+    "dist:mac": "electron-builder --mac dmg --publish never",
+    "dist:mac:arm64": "electron-builder --mac dmg --arm64 --publish never",
+    "dist:mac:x64": "electron-builder --mac dmg --x64 --publish never",
+    "dist:linux": "electron-builder --linux AppImage --x64 --publish never",
+    "dist:win": "electron-builder --win nsis --publish never",
+    "dist:win:arm64": "electron-builder --win nsis --arm64 --publish never",
+    "dist:win:x64": "electron-builder --win nsis --x64 --publish never"
+  },
+  "dependencies": {
+    "electron": "^40.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.1.0",
+    "electron-builder": "^26.0.12",
+    "tsdown": "^0.20.3",
+    "typescript": "5.9.3"
+  },
+  "build": {
+    "appId": "com.jobseeker.desktop",
+    "productName": "Jobseeker",
+    "artifactName": "Jobseeker-${version}-${arch}.${ext}",
+    "files": [
+      "dist-electron/**",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../web/dist",
+        "to": "apps/web/dist"
+      },
+      {
+        "from": "../server/dist",
+        "to": "apps/server/dist"
+      }
+    ]
+  }
+}
