@@ -17,7 +17,7 @@ interface TopicArtifactPanelProps {
 }
 
 export function TopicArtifactPanel({ projectId, topics, liveContent }: TopicArtifactPanelProps) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [content, setContent] = useState<string>("");
   const [loading, setLoading] = useState(false);

@@ -9,7 +9,7 @@ import type { ChatModelSelection, ProviderId } from "@jobseeker/contracts";
 type ModelChoiceScope = "coach" | "profile" | "explorer";
 
 function toProviderOption(provider: ChatProviderResponse): ProviderOption | null {
-  if (provider.id !== "codex" && provider.id !== "claude") {
+  if (provider.id !== "codex" && provider.id !== "claude" && provider.id !== "opencode") {
     return null;
   }
 

@@ -159,11 +159,46 @@ export type ConnectionStatus = {
   message: string;
 };
 
+export type ProviderSettings = {
+  codex: {
+    enabled: boolean;
+    binaryPath: string;
+    homePath: string;
+  };
+  claude: {
+    enabled: boolean;
+    binaryPath: string;
+  };
+  opencode: {
+    enabled: boolean;
+    binaryPath: string;
+    serverUrl: string;
+    serverPassword: string;
+    customModels: string[];
+  };
+};
+
 type ConnectionsResponse = { connections: ConnectionStatus[] };
 
 export async function getConnections(): Promise<ConnectionStatus[]> {
   const response = await fetch(apiUrl("/api/settings/connections"));
   return (await parseJson<ConnectionsResponse>(response)).connections;
+}
+
+export async function getProviderSettings(): Promise<ProviderSettings> {
+  const response = await fetch(apiUrl("/api/settings/providers"));
+  return (await parseJson<{ providers: ProviderSettings }>(response)).providers;
+}
+
+export async function updateProviderSettings(
+  settings: Partial<ProviderSettings>,
+): Promise<ProviderSettings> {
+  const response = await fetch(apiUrl("/api/settings/providers"), {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(settings),
+  });
+  return (await parseJson<{ providers: ProviderSettings }>(response)).providers;
 }
 
 export async function updateProjectExplorer(

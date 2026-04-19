@@ -190,6 +190,7 @@ async function runTask(
 
   if (input.type === "explorer_discovery") {
     const result = await runExplorerDiscovery(input.projectId, {
+      modelSelection: input.modelSelection,
       onProgress: (progress) =>
         writeEvent(input.projectId, "task.progress", {
           taskId,

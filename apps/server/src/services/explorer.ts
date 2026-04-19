@@ -4,6 +4,7 @@ import path from "node:path";
 import { z } from "zod";
 import { runAgent } from "@jobseeker/browser-agent";
 import type {
+  ChatModelSelection,
   DomainMemory,
   ExplorerConfigRecord,
   ExplorerDomainConfig,
@@ -14,9 +15,11 @@ import type {
 
 import { dataDir } from "../env";
 import { db } from "../db";
-import { explorerConfigs, jobMatches, jobs, profiles } from "../db/schema";
+import { explorerConfigs, jobMatches, jobs, profiles, projects } from "../db/schema";
 import { makeId } from "../lib/ids";
 import { logInfo, logWarn } from "../lib/log";
+import { createProjectSlug, ensureCodexHomeDir, ensureScopeDir } from "../lib/paths";
+import { getProviderSettings } from "../lib/provider-settings";
 import { loadMemory, pickMemory } from "./explorerMemory";
 
 const FOUND_JOB_SCHEMA = z.object({
@@ -40,6 +43,8 @@ export interface ExplorerProgress {
   query: string;
   currentQuery: number;
   totalQueries: number;
+  model?: string;
+  effort?: string;
   jobsFound?: number;
   step?: number;
   url?: string;
@@ -52,7 +57,25 @@ export interface ExplorerProgress {
 }
 
 interface ExplorerRunOptions {
+  modelSelection?: ChatModelSelection;
   onProgress?: (progress: ExplorerProgress) => void | Promise<void>;
+}
+
+function resolveExplorerModelSelection(selection?: ChatModelSelection): {
+  model: string;
+  effort: string;
+} {
+  const defaultModel = process.env.EXPLORER_MODEL ?? "gpt-5.3-codex";
+  const defaultEffort = process.env.EXPLORER_EFFORT ?? "medium";
+
+  if (selection?.provider !== "codex") {
+    return { model: defaultModel, effort: defaultEffort };
+  }
+
+  return {
+    model: selection.model || defaultModel,
+    effort: selection.effort || defaultEffort,
+  };
 }
 
 export async function runExplorerDiscovery(projectId: string): Promise<{
@@ -80,6 +103,17 @@ export async function runExplorerDiscovery(
     readExplorerConfig(projectId),
     readProfile(projectId),
   ]);
+  const providerSettings = getProviderSettings();
+  if (!providerSettings.codex.enabled) {
+    logWarn("explorer skipped", { projectId, reason: "codex_provider_disabled" });
+    return { jobsCreated: 0, domainsProcessed: 0, queriesRun: 0 };
+  }
+  const project = await db.select().from(projects).where(eq(projects.id, projectId)).get();
+  if (!project) {
+    return { jobsCreated: 0, domainsProcessed: 0, queriesRun: 0 };
+  }
+  const projectSlug = project.slug ?? createProjectSlug(project.title, project.id);
+  const agent = resolveExplorerModelSelection(options?.modelSelection);
   const memories = await loadMemory();
   const domains = getRunnableDomains(config.domains);
   if (domains.length === 0) {
@@ -119,6 +153,8 @@ export async function runExplorerDiscovery(
       query: run.query,
       currentQuery: index + 1,
       totalQueries,
+      model: agent.model,
+      effort: agent.effort,
     });
 
     const jobsForQuery = await findJobsForQuery({
@@ -129,6 +165,11 @@ export async function runExplorerDiscovery(
       memory: pickMemory(memories, run.domain.domain),
       currentQuery: index + 1,
       totalQueries,
+      model: agent.model,
+      effort: agent.effort,
+      projectSlug,
+      codexBinaryPath: providerSettings.codex.binaryPath,
+      codexAuthHome: providerSettings.codex.homePath,
       onProgress: options?.onProgress,
     });
     collected.push(...jobsForQuery);
@@ -235,13 +276,16 @@ async function findJobsForQuery(input: {
   memory: DomainMemory | null;
   currentQuery: number;
   totalQueries: number;
+  model: string;
+  effort: string;
+  projectSlug: string;
+  codexBinaryPath: string;
+  codexAuthHome: string;
   onProgress?: (progress: ExplorerProgress) => void | Promise<void>;
 }): Promise<FoundJob[]> {
   const url = toDomainUrl(input.domain);
   const task = buildAgentTask(input);
   const launch = getLaunchOptions();
-  const model = process.env.EXPLORER_MODEL ?? "gpt-5.3-codex";
-  const effort = process.env.EXPLORER_EFFORT ?? "medium";
   const maxSteps = Number.parseInt(process.env.EXPLORER_MAX_STEPS ?? "40", 10) || 40;
 
   logInfo("explorer query started", {
@@ -249,6 +293,8 @@ async function findJobsForQuery(input: {
     query: input.query,
     freshness: input.freshness,
     maxJobs: input.maxJobs,
+    model: input.model,
+    effort: input.effort,
     headless: launch.headless,
     channel: launch.channel,
     userDataDir: launch.userDataDir,
@@ -263,9 +309,13 @@ async function findJobsForQuery(input: {
       task,
       startUrl: url,
       maxSteps,
-      model,
-      effort,
+      model: input.model,
+      effort: input.effort,
       launch,
+      codexBin: input.codexBinaryPath,
+      codexCwd: ensureScopeDir(input.projectSlug, "explorer"),
+      codexHome: ensureCodexHomeDir(input.projectSlug, "explorer", `explorer_${input.domain}`),
+      codexAuthHome: input.codexAuthHome,
       onStep: (step) => {
         logInfo("explorer crawl step", {
           domain: input.domain,
@@ -318,9 +368,13 @@ async function findJobsForQuery(input: {
         task,
         startUrl: url,
         maxSteps,
-        model,
-        effort,
+        model: input.model,
+        effort: input.effort,
         launch: getRetryLaunchOptions(),
+        codexBin: input.codexBinaryPath,
+        codexCwd: ensureScopeDir(input.projectSlug, "explorer"),
+        codexHome: ensureCodexHomeDir(input.projectSlug, "explorer", `explorer_${input.domain}`),
+        codexAuthHome: input.codexAuthHome,
         onStep: (step) => {
           logInfo("explorer crawl step", {
             domain: input.domain,

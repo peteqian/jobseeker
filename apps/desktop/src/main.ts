@@ -1,16 +1,28 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { app, BrowserWindow, shell } from "electron";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const require = createRequire(import.meta.url);
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
 const backendPort = Number.parseInt(process.env.PORT ?? "3456", 10) || 3456;
 
+type AutoUpdaterLike = {
+  autoDownload: boolean;
+  autoInstallOnAppQuit: boolean;
+  on(event: string, listener: (...args: unknown[]) => void): void;
+  checkForUpdates(): Promise<unknown>;
+};
+
+const { autoUpdater } = require("electron-updater") as { autoUpdater: AutoUpdaterLike };
+
 let mainWindow: BrowserWindow | null = null;
 let backendProcess: ChildProcess | null = null;
+let updatePollTimer: ReturnType<typeof setInterval> | null = null;
 
 function resolveRepoRoot(): string {
   return resolve(__dirname, "../../..");
@@ -108,8 +120,78 @@ function createWindow(): BrowserWindow {
   return window;
 }
 
+function setupAutoUpdates(): void {
+  if (isDevelopment || !app.isPackaged) {
+    return;
+  }
+
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+  (autoUpdater as { allowPrerelease?: boolean }).allowPrerelease = app
+    .getVersion()
+    .toLowerCase()
+    .includes("nightly");
+
+  autoUpdater.on("checking-for-update", () => {
+    console.info("[desktop] checking for updates");
+  });
+
+  autoUpdater.on("update-available", (info: unknown) => {
+    const version =
+      typeof info === "object" && info && "version" in info ? String(info.version) : "unknown";
+    console.info(`[desktop] update available: ${version}`);
+  });
+
+  autoUpdater.on("update-not-available", () => {
+    console.info("[desktop] update not available");
+  });
+
+  autoUpdater.on("error", (error: unknown) => {
+    console.warn("[desktop] auto-update error", error);
+  });
+
+  autoUpdater.on("download-progress", (progress: unknown) => {
+    const percent =
+      typeof progress === "object" && progress && "percent" in progress
+        ? Number(progress.percent)
+        : Number.NaN;
+    console.info(
+      `[desktop] update download progress: ${Number.isFinite(percent) ? Math.round(percent) : "unknown"}%`,
+    );
+  });
+
+  autoUpdater.on("update-downloaded", (info: unknown) => {
+    const version =
+      typeof info === "object" && info && "version" in info ? String(info.version) : "unknown";
+    console.info(`[desktop] update downloaded: ${version}`);
+  });
+
+  void autoUpdater.checkForUpdates().catch((error: unknown) => {
+    console.warn("[desktop] initial update check failed", error);
+  });
+
+  updatePollTimer = setInterval(
+    () => {
+      void autoUpdater.checkForUpdates().catch((error: unknown) => {
+        console.warn("[desktop] periodic update check failed", error);
+      });
+    },
+    30 * 60 * 1000,
+  );
+}
+
+function teardownAutoUpdates(): void {
+  if (!updatePollTimer) {
+    return;
+  }
+
+  clearInterval(updatePollTimer);
+  updatePollTimer = null;
+}
+
 void app.whenReady().then(() => {
   startBackend();
+  setupAutoUpdates();
   mainWindow = createWindow();
 
   app.on("activate", () => {
@@ -126,5 +208,6 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", () => {
+  teardownAutoUpdates();
   stopBackend();
 });

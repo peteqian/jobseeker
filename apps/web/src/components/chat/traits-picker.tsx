@@ -93,7 +93,7 @@ export function TraitsPicker({
             variant="ghost"
             disabled={disabled}
             className={cn(
-              "max-w-40 justify-start gap-2 px-2 text-muted-foreground/70 hover:text-foreground/80",
+              "w-40 justify-start gap-2 px-2 text-muted-foreground/70 hover:text-foreground/80",
               className,
             )}
           />

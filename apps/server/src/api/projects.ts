@@ -18,11 +18,12 @@ import type {
 } from "@jobseeker/contracts";
 
 import { makeId } from "../lib/ids";
-import { createProjectSlug, ensureProjectDir } from "../lib/paths";
+import { createProjectSlug, ensureProjectDir, ensureScopeDir } from "../lib/paths";
 import { createEmptyQuestionCardSections, readQuestionCardFile } from "../services/questions";
 import { db } from "../db";
 import {
   chatMessages,
+  chatThreads,
   documents,
   explorerConfigs,
   insightCards,
@@ -84,6 +85,8 @@ export function registerProjectRoutes(app: Hono) {
     });
 
     ensureProjectDir(projectSlug);
+    ensureScopeDir(projectSlug, "coach");
+    ensureScopeDir(projectSlug, "explorer");
 
     await db.insert(explorerConfigs).values({
       projectId,
@@ -91,6 +94,27 @@ export function registerProjectRoutes(app: Hono) {
       includeAgentSuggestions: true,
       updatedAt: timestamp,
     });
+
+    await db.insert(chatThreads).values([
+      {
+        id: makeId("thread"),
+        projectId,
+        scope: "coach",
+        title: "Coach",
+        status: "active",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      },
+      {
+        id: makeId("thread"),
+        projectId,
+        scope: "explorer",
+        title: "Explorer",
+        status: "active",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      },
+    ]);
 
     const snapshot = await readProjectSnapshot(projectId);
     if (!snapshot) {
@@ -204,6 +228,7 @@ export async function readProjectSnapshot(projectId: string): Promise<ProjectSna
     matches,
     profile,
     topicFileRows,
+    chatThreadRows,
   ] = await Promise.all([
     db
       .select()
@@ -257,7 +282,19 @@ export async function readProjectSnapshot(projectId: string): Promise<ProjectSna
       .where(eq(topicFiles.projectId, projectId))
       .orderBy(asc(topicFiles.createdAt))
       .all(),
+    db
+      .select()
+      .from(chatThreads)
+      .where(eq(chatThreads.projectId, projectId))
+      .orderBy(asc(chatThreads.createdAt))
+      .all(),
   ]);
+
+  const coachThread =
+    chatThreadRows.find((thread) => thread.scope === "coach" && thread.status === "active") ??
+    chatThreadRows.find((thread) => thread.scope === "coach") ??
+    null;
+  const coachThreadId = coachThread?.id ?? null;
 
   return {
     project: {
@@ -288,13 +325,28 @@ export async function readProjectSnapshot(projectId: string): Promise<ProjectSna
       content: document.content ?? undefined,
       createdAt: document.createdAt,
     })),
-    chatMessages: chatMessageRows.map((msg) => ({
-      id: msg.id,
-      projectId: msg.projectId,
-      role: msg.role as ChatMessage["role"],
-      content: msg.content,
-      createdAt: msg.createdAt,
+    chatThreads: chatThreadRows.map((thread) => ({
+      id: thread.id,
+      projectId: thread.projectId,
+      scope: thread.scope as "coach" | "explorer",
+      title: thread.title,
+      status: thread.status as "active" | "archived",
+      createdAt: thread.createdAt,
+      updatedAt: thread.updatedAt,
     })),
+    chatMessages: chatMessageRows
+      .map((msg) => ({
+        id: msg.id,
+        projectId: msg.projectId,
+        threadId: msg.threadId ?? coachThreadId ?? "",
+        role: msg.role as ChatMessage["role"],
+        content: msg.content,
+        createdAt: msg.createdAt,
+      }))
+      .filter(
+        (message) =>
+          message.threadId !== "" && (coachThreadId ? message.threadId === coachThreadId : true),
+      ),
     insightCards: insightCardRows
       .filter((card) => card.status === "active")
       .map((card) => ({

@@ -1,4 +1,4 @@
-import { ChevronDown, Cpu, Sparkles } from "lucide-react";
+import { ChevronDown, Cpu, Sparkles, Terminal } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
   PROVIDER_DISPLAY_NAMES,
@@ -27,6 +27,7 @@ interface ProviderModelPickerProps {
 const PROVIDER_ICONS = {
   codex: Sparkles,
   claude: Cpu,
+  opencode: Terminal,
 } satisfies Record<ProviderId, typeof Cpu>;
 
 export function ProviderModelPicker({
@@ -84,7 +85,7 @@ export function ProviderModelPicker({
             variant="ghost"
             disabled={disabled}
             data-chat-provider-model-picker="true"
-            className="max-w-52 justify-start gap-2 px-2 text-muted-foreground/70 hover:text-foreground"
+            className="w-52 justify-start gap-2 px-2 text-muted-foreground/70 hover:text-foreground"
           />
         }
       >
@@ -97,14 +98,14 @@ export function ProviderModelPicker({
         side="top"
         align="start"
         sideOffset={8}
-        className="w-[420px] gap-0 overflow-hidden p-0"
+        className="h-[clamp(240px,55dvh,320px)] w-[420px] gap-0 overflow-hidden p-0"
       >
-        <div className="grid grid-cols-[150px_minmax(0,1fr)]">
-          <div className="border-r bg-muted/20 p-2">
+        <div className="grid h-full grid-cols-[150px_minmax(0,1fr)]">
+          <div className="flex min-h-0 flex-col border-r bg-muted/20 p-2">
             <div className="px-2 py-1 text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
               Providers
             </div>
-            <div className="space-y-1">
+            <div className="min-h-0 space-y-1 overflow-y-auto">
               {availableProviders.map((provider) => {
                 const ProviderIcon = PROVIDER_ICONS[provider.id];
                 const isActive = previewProvider?.id === provider.id;
@@ -153,11 +154,11 @@ export function ProviderModelPicker({
             </div>
           </div>
 
-          <div className="p-2">
+          <div className="flex min-h-0 flex-col p-2">
             <div className="px-2 py-1 text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
               {previewProvider ? PROVIDER_DISPLAY_NAMES[previewProvider.id] : "Models"}
             </div>
-            <div className="space-y-1">
+            <div className="min-h-0 space-y-1 overflow-y-auto">
               {previewProvider?.models.map((model) => {
                 const isSelected =
                   selection?.provider === previewProvider.id && selection?.model === model.slug;

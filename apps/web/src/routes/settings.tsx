@@ -1,13 +1,21 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useState } from "react";
 import { CheckCircle2, Loader2, RefreshCw, XCircle } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { useShellHeader } from "@/providers/shell-header-context";
 import { useTheme } from "@/components/theme-provider";
-import { type ConnectionStatus, getConnections } from "@/lib/api";
+import {
+  type ConnectionStatus,
+  type ProviderSettings,
+  getConnections,
+  getProviderSettings,
+  updateProviderSettings,
+} from "@/lib/api";
 
 export const Route = createFileRoute("/settings")({
   component: SettingsPage,
@@ -58,11 +66,60 @@ function ConnectionRow({ connection }: { connection: ConnectionStatus }) {
   );
 }
 
+type ProviderId = "codex" | "claude" | "opencode";
+
+function getProviderSummary(input: { enabled: boolean; connection: ConnectionStatus | null }) {
+  if (!input.enabled) {
+    return {
+      headline: "Disabled",
+      detail: "Provider is disabled for new sessions.",
+      dotClass: "bg-amber-400",
+    };
+  }
+
+  if (!input.connection) {
+    return {
+      headline: "Checking status",
+      detail: "Waiting for the server to report provider health.",
+      dotClass: "bg-muted-foreground/60",
+    };
+  }
+
+  if (input.connection.ok) {
+    return {
+      headline: "Available",
+      detail: input.connection.message,
+      dotClass: "bg-emerald-500",
+    };
+  }
+
+  return {
+    headline: "Unavailable",
+    detail: input.connection.message,
+    dotClass: "bg-red-500",
+  };
+}
+
+function parseCsv(value: string): string[] {
+  return value
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function joinCsv(value: string[]): string {
+  return value.join(", ");
+}
+
 function SettingsPage() {
   useShellHeader(SETTINGS_HEADER);
+  const queryClient = useQueryClient();
   const { theme, setTheme, routerDevtools, setRouterDevtools } = useTheme();
   const [connections, setConnections] = useState<ConnectionStatus[]>([]);
+  const [providerSettings, setProviderSettings] = useState<ProviderSettings | null>(null);
+  const [savedProviderSettings, setSavedProviderSettings] = useState<ProviderSettings | null>(null);
   const [loading, setLoading] = useState(true);
+  const [savingProviderId, setSavingProviderId] = useState<ProviderId | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
@@ -70,8 +127,13 @@ function SettingsPage() {
     setError(null);
 
     try {
-      const result = await getConnections();
-      setConnections(result);
+      const [connectionResult, settingsResult] = await Promise.all([
+        getConnections(),
+        getProviderSettings(),
+      ]);
+      setConnections(connectionResult);
+      setProviderSettings(settingsResult);
+      setSavedProviderSettings(settingsResult);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to check connections");
     } finally {
@@ -79,13 +141,56 @@ function SettingsPage() {
     }
   }, []);
 
+  const saveProvider = useCallback(
+    async (providerId: ProviderId) => {
+      if (!providerSettings) return;
+      setSavingProviderId(providerId);
+      setError(null);
+
+      const patch =
+        providerId === "codex"
+          ? { codex: providerSettings.codex }
+          : providerId === "claude"
+            ? { claude: providerSettings.claude }
+            : { opencode: providerSettings.opencode };
+
+      try {
+        const saved = await updateProviderSettings(patch);
+        setProviderSettings(saved);
+        setSavedProviderSettings(saved);
+        await queryClient.invalidateQueries({ queryKey: ["chat", "providers"] });
+        const result = await getConnections();
+        setConnections(result);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to save provider settings");
+      } finally {
+        setSavingProviderId(null);
+      }
+    },
+    [providerSettings, queryClient],
+  );
+
+  const codexConnection = connections.find((connection) => connection.id === "codex") ?? null;
+  const claudeConnection = connections.find((connection) => connection.id === "claude") ?? null;
+  const opencodeConnection = connections.find((connection) => connection.id === "opencode") ?? null;
+
+  const codexDirty =
+    Boolean(providerSettings && savedProviderSettings) &&
+    JSON.stringify(providerSettings.codex) !== JSON.stringify(savedProviderSettings.codex);
+  const claudeDirty =
+    Boolean(providerSettings && savedProviderSettings) &&
+    JSON.stringify(providerSettings.claude) !== JSON.stringify(savedProviderSettings.claude);
+  const opencodeDirty =
+    Boolean(providerSettings && savedProviderSettings) &&
+    JSON.stringify(providerSettings.opencode) !== JSON.stringify(savedProviderSettings.opencode);
+
   useEffect(() => {
     void refresh();
   }, [refresh]);
 
   return (
-    <div className="flex-1 overflow-y-auto p-6 sm:p-8">
-      <div className="mx-auto flex w-full max-w-3xl flex-col gap-8">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden p-6 sm:p-8">
+      <div className="mx-auto flex w-full max-w-3xl min-h-0 flex-1 flex-col gap-8 overflow-y-auto pr-2">
         <section className="space-y-2.5">
           <div className="px-1">
             <h2 className="text-sm font-semibold tracking-tight">System</h2>
@@ -117,15 +222,17 @@ function SettingsPage() {
               </div>
             </div>
 
-            <div className="border-t border-border/50 px-4 py-3 sm:px-5">
-              <div className="flex items-center justify-between">
-                <div className="space-y-1">
-                  <h3 className="text-sm font-semibold text-foreground">Router Devtools</h3>
-                  <p className="text-sm text-muted-foreground">Show the TanStack Router panel.</p>
+            {import.meta.env.DEV ? (
+              <div className="border-t border-border/50 px-4 py-3 sm:px-5">
+                <div className="flex items-center justify-between">
+                  <div className="space-y-1">
+                    <h3 className="text-sm font-semibold text-foreground">Router Devtools</h3>
+                    <p className="text-sm text-muted-foreground">Show the TanStack Router panel.</p>
+                  </div>
+                  <Switch checked={routerDevtools} onCheckedChange={setRouterDevtools} />
                 </div>
-                <Switch checked={routerDevtools} onCheckedChange={setRouterDevtools} />
               </div>
-            </div>
+            ) : null}
 
             <div className="border-t border-border/50 px-4 py-3 sm:px-5">
               <div className="flex items-center justify-between">
@@ -160,6 +267,341 @@ function SettingsPage() {
         </section>
 
         <section className="space-y-2.5">
+          <div className="px-1">
+            <h2 className="text-sm font-semibold tracking-tight">Providers</h2>
+          </div>
+
+          <div className="space-y-4">
+            <div className="relative overflow-hidden rounded-lg bg-card text-card-foreground shadow-sm">
+              <div className="border-b border-border/50 px-4 py-4 sm:px-5">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`inline-block size-2.5 rounded-full ${
+                          getProviderSummary({
+                            enabled: providerSettings?.codex.enabled ?? true,
+                            connection: codexConnection,
+                          }).dotClass
+                        }`}
+                      />
+                      <h3 className="text-base font-semibold text-foreground">Codex</h3>
+                    </div>
+                    <p className="text-sm text-foreground/90">
+                      {
+                        getProviderSummary({
+                          enabled: providerSettings?.codex.enabled ?? true,
+                          connection: codexConnection,
+                        }).headline
+                      }
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      {
+                        getProviderSummary({
+                          enabled: providerSettings?.codex.enabled ?? true,
+                          connection: codexConnection,
+                        }).detail
+                      }
+                    </p>
+                  </div>
+                  <Switch
+                    checked={providerSettings?.codex.enabled ?? true}
+                    onCheckedChange={(enabled) =>
+                      setProviderSettings((current) =>
+                        current
+                          ? {
+                              ...current,
+                              codex: { ...current.codex, enabled },
+                            }
+                          : current,
+                      )
+                    }
+                  />
+                </div>
+              </div>
+              <div className="space-y-4 px-4 py-4 sm:px-5">
+                <div className="space-y-2">
+                  <h4 className="text-sm font-semibold">Codex binary path</h4>
+                  <Input
+                    value={providerSettings?.codex.binaryPath ?? ""}
+                    onChange={(event) =>
+                      setProviderSettings((current) =>
+                        current
+                          ? {
+                              ...current,
+                              codex: { ...current.codex, binaryPath: event.target.value },
+                            }
+                          : current,
+                      )
+                    }
+                    placeholder="codex"
+                  />
+                  <p className="text-xs text-muted-foreground">Path to the Codex binary</p>
+                </div>
+                <div className="space-y-2">
+                  <h4 className="text-sm font-semibold">Codex home path</h4>
+                  <Input
+                    value={providerSettings?.codex.homePath ?? ""}
+                    onChange={(event) =>
+                      setProviderSettings((current) =>
+                        current
+                          ? {
+                              ...current,
+                              codex: { ...current.codex, homePath: event.target.value },
+                            }
+                          : current,
+                      )
+                    }
+                    placeholder="CODEX_HOME (optional)"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Optional custom Codex home and config directory.
+                  </p>
+                </div>
+                <div className="flex justify-end">
+                  <Button
+                    onClick={() => void saveProvider("codex")}
+                    disabled={!providerSettings || savingProviderId === "codex" || !codexDirty}
+                  >
+                    {savingProviderId === "codex" ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : null}
+                    Save Codex settings
+                  </Button>
+                </div>
+              </div>
+            </div>
+
+            <div className="relative overflow-hidden rounded-lg bg-card text-card-foreground shadow-sm">
+              <div className="border-b border-border/50 px-4 py-4 sm:px-5">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`inline-block size-2.5 rounded-full ${
+                          getProviderSummary({
+                            enabled: providerSettings?.opencode.enabled ?? true,
+                            connection: opencodeConnection,
+                          }).dotClass
+                        }`}
+                      />
+                      <h3 className="text-base font-semibold text-foreground">OpenCode</h3>
+                    </div>
+                    <p className="text-sm text-foreground/90">
+                      {
+                        getProviderSummary({
+                          enabled: providerSettings?.opencode.enabled ?? true,
+                          connection: opencodeConnection,
+                        }).headline
+                      }
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      {
+                        getProviderSummary({
+                          enabled: providerSettings?.opencode.enabled ?? true,
+                          connection: opencodeConnection,
+                        }).detail
+                      }
+                    </p>
+                  </div>
+                  <Switch
+                    checked={providerSettings?.opencode.enabled ?? true}
+                    onCheckedChange={(enabled) =>
+                      setProviderSettings((current) =>
+                        current
+                          ? {
+                              ...current,
+                              opencode: { ...current.opencode, enabled },
+                            }
+                          : current,
+                      )
+                    }
+                  />
+                </div>
+              </div>
+              <div className="space-y-4 px-4 py-4 sm:px-5">
+                <div className="space-y-2">
+                  <h4 className="text-sm font-semibold">OpenCode binary path</h4>
+                  <Input
+                    value={providerSettings?.opencode.binaryPath ?? ""}
+                    onChange={(event) =>
+                      setProviderSettings((current) =>
+                        current
+                          ? {
+                              ...current,
+                              opencode: { ...current.opencode, binaryPath: event.target.value },
+                            }
+                          : current,
+                      )
+                    }
+                    placeholder="opencode"
+                  />
+                  <p className="text-xs text-muted-foreground">Path to the OpenCode binary</p>
+                </div>
+
+                <div className="space-y-2">
+                  <h4 className="text-sm font-semibold">OpenCode server URL</h4>
+                  <Input
+                    value={providerSettings?.opencode.serverUrl ?? ""}
+                    onChange={(event) =>
+                      setProviderSettings((current) =>
+                        current
+                          ? {
+                              ...current,
+                              opencode: { ...current.opencode, serverUrl: event.target.value },
+                            }
+                          : current,
+                      )
+                    }
+                    placeholder="http://127.0.0.1:4096"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Leave blank to let OpenCode spawn locally when needed.
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <h4 className="text-sm font-semibold">OpenCode server password</h4>
+                  <Input
+                    value={providerSettings?.opencode.serverPassword ?? ""}
+                    onChange={(event) =>
+                      setProviderSettings((current) =>
+                        current
+                          ? {
+                              ...current,
+                              opencode: { ...current.opencode, serverPassword: event.target.value },
+                            }
+                          : current,
+                      )
+                    }
+                    placeholder="Server password (optional)"
+                  />
+                  <p className="text-xs text-muted-foreground">Stored in plain text on disk.</p>
+                </div>
+
+                <div className="space-y-2">
+                  <h4 className="text-sm font-semibold">OpenCode custom models</h4>
+                  <Input
+                    value={joinCsv(providerSettings?.opencode.customModels ?? [])}
+                    onChange={(event) =>
+                      setProviderSettings((current) =>
+                        current
+                          ? {
+                              ...current,
+                              opencode: {
+                                ...current.opencode,
+                                customModels: parseCsv(event.target.value),
+                              },
+                            }
+                          : current,
+                      )
+                    }
+                    placeholder="openai/gpt-5, anthropic/claude-sonnet-4-5"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Comma-separated `provider/model` slugs.
+                  </p>
+                </div>
+
+                <div className="flex justify-end">
+                  <Button
+                    onClick={() => void saveProvider("opencode")}
+                    disabled={
+                      !providerSettings || savingProviderId === "opencode" || !opencodeDirty
+                    }
+                  >
+                    {savingProviderId === "opencode" ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : null}
+                    Save OpenCode settings
+                  </Button>
+                </div>
+              </div>
+            </div>
+
+            <div className="relative overflow-hidden rounded-lg bg-card text-card-foreground shadow-sm">
+              <div className="border-b border-border/50 px-4 py-4 sm:px-5">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`inline-block size-2.5 rounded-full ${
+                          getProviderSummary({
+                            enabled: providerSettings?.claude.enabled ?? true,
+                            connection: claudeConnection,
+                          }).dotClass
+                        }`}
+                      />
+                      <h3 className="text-base font-semibold text-foreground">Claude</h3>
+                    </div>
+                    <p className="text-sm text-foreground/90">
+                      {
+                        getProviderSummary({
+                          enabled: providerSettings?.claude.enabled ?? true,
+                          connection: claudeConnection,
+                        }).headline
+                      }
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      {
+                        getProviderSummary({
+                          enabled: providerSettings?.claude.enabled ?? true,
+                          connection: claudeConnection,
+                        }).detail
+                      }
+                    </p>
+                  </div>
+                  <Switch
+                    checked={providerSettings?.claude.enabled ?? true}
+                    onCheckedChange={(enabled) =>
+                      setProviderSettings((current) =>
+                        current
+                          ? {
+                              ...current,
+                              claude: { ...current.claude, enabled },
+                            }
+                          : current,
+                      )
+                    }
+                  />
+                </div>
+              </div>
+              <div className="space-y-4 px-4 py-4 sm:px-5">
+                <div className="space-y-2">
+                  <h4 className="text-sm font-semibold">Claude binary path</h4>
+                  <Input
+                    value={providerSettings?.claude.binaryPath ?? ""}
+                    onChange={(event) =>
+                      setProviderSettings((current) =>
+                        current
+                          ? {
+                              ...current,
+                              claude: { ...current.claude, binaryPath: event.target.value },
+                            }
+                          : current,
+                      )
+                    }
+                    placeholder="claude"
+                  />
+                  <p className="text-xs text-muted-foreground">Path to the Claude binary</p>
+                </div>
+                <div className="flex justify-end">
+                  <Button
+                    onClick={() => void saveProvider("claude")}
+                    disabled={!providerSettings || savingProviderId === "claude" || !claudeDirty}
+                  >
+                    {savingProviderId === "claude" ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : null}
+                    Save Claude settings
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="space-y-2.5">
           <div className="flex items-center justify-between px-1">
             <h2 className="text-sm font-semibold tracking-tight">About</h2>
           </div>
@@ -179,11 +621,9 @@ function SettingsPage() {
               <div className="space-y-1">
                 <h3 className="text-sm font-semibold text-foreground">Claude</h3>
                 <p className="text-sm text-muted-foreground">
-                  Anthropic Claude API. Requires{" "}
-                  <code className="rounded bg-muted px-1 py-0.5 text-[11px]">
-                    ANTHROPIC_API_KEY
-                  </code>{" "}
-                  to be set on the server.
+                  Claude provider uses the local{" "}
+                  <code className="rounded bg-muted px-1 py-0.5 text-[11px]">claude</code> CLI
+                  binary.
                 </p>
               </div>
             </div>

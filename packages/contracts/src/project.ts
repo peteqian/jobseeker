@@ -1,4 +1,4 @@
-import type { ChatMessage, InsightCard } from "./chat";
+import type { ChatMessage, ChatThread, InsightCard } from "./chat";
 import type { TopicFileMeta } from "./topic";
 import type {
   ExplorerFreshness,
@@ -98,6 +98,7 @@ export interface ProjectSnapshot {
   project: ProjectRecord;
   tasks: TaskRecord[];
   documents: ProjectDocument[];
+  chatThreads: ChatThread[];
   chatMessages: ChatMessage[];
   insightCards: InsightCard[];
   questionCards: QuestionCard[];

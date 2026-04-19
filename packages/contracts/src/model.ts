@@ -1,13 +1,22 @@
-export type ProviderId = "codex" | "claude";
+export type ProviderId = "codex" | "claude" | "opencode";
 
 export const PROVIDER_DISPLAY_NAMES: Record<ProviderId, string> = {
   codex: "Codex",
   claude: "Claude",
+  opencode: "OpenCode",
 };
+
+export interface EffortOption {
+  value: string;
+  label: string;
+  isDefault?: boolean;
+}
 
 export interface ProviderModelCapabilities {
   reasoningEffort: string[];
   defaultEffort: string;
+  variantOptions?: EffortOption[];
+  agentOptions?: EffortOption[];
 }
 
 export interface ProviderModel {

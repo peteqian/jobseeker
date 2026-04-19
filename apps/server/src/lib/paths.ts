@@ -3,6 +3,8 @@ import path from "node:path";
 
 import { dataDir } from "../env";
 
+export type ProjectScope = "coach" | "explorer";
+
 // ---------------------------------------------------------------------------
 // Project directories
 // ---------------------------------------------------------------------------
@@ -23,6 +25,26 @@ export function ensureProjectDir(projectSlug: string) {
 
 export function projectPath(projectSlug: string, ...segments: string[]) {
   return path.join(projectDir(projectSlug), ...segments);
+}
+
+export function scopeDir(projectSlug: string, scope: ProjectScope) {
+  return projectPath(projectSlug, scope);
+}
+
+export function ensureScopeDir(projectSlug: string, scope: ProjectScope) {
+  const dir = scopeDir(projectSlug, scope);
+  mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+export function codexHomeDir(projectSlug: string, scope: ProjectScope, threadId: string) {
+  return projectPath(projectSlug, ".codex", scope, threadId);
+}
+
+export function ensureCodexHomeDir(projectSlug: string, scope: ProjectScope, threadId: string) {
+  const dir = codexHomeDir(projectSlug, scope, threadId);
+  mkdirSync(dir, { recursive: true });
+  return dir;
 }
 
 // ---------------------------------------------------------------------------

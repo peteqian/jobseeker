@@ -1,9 +1,9 @@
 import { mkdirSync } from "node:fs";
 
-import { projectPath } from "../lib/paths";
+import { projectPath, scopeDir } from "../lib/paths";
 
 export function topicsDir(projectSlug: string) {
-  return projectPath(projectSlug, "topics");
+  return projectPath(scopeDir(projectSlug, "coach"), "topics");
 }
 
 export function topicPath(projectSlug: string, slug: string) {

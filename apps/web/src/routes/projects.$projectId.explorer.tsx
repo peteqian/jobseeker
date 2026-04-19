@@ -1,11 +1,4 @@
-import {
-  type PointerEvent as ReactPointerEvent,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import type { ColumnDef, SortingState } from "@tanstack/react-table";
 import {
@@ -17,6 +10,7 @@ import {
 import type {
   ChatMessage,
   ChatModelSelection,
+  ChatThread,
   ExplorerDomainConfig,
   ExplorerFreshness,
   JobMatch,
@@ -25,8 +19,6 @@ import type {
 } from "@jobseeker/contracts";
 import {
   ArrowUpDown,
-  ChevronDown,
-  ChevronUp,
   ExternalLink,
   FileSearch,
   Info,
@@ -38,7 +30,8 @@ import {
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ChatPanel } from "@/components/chat/chat-panel";
+import { ChatInput } from "@/components/chat/chat-input";
+import { ProviderModelPicker, type ProviderOption } from "@/components/chat/provider-model-picker";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -77,6 +70,7 @@ import { useModelChoice } from "@/hooks/use-model-choice";
 import { useJobseeker, useProjectEvents } from "@/providers/jobseeker-hooks";
 import { useShellHeader } from "@/providers/shell-header-context";
 import { useProject } from "@/providers/project-context";
+import { createThread, listThreads } from "@/rpc/chat-client";
 
 export const Route = createFileRoute("/projects/$projectId/explorer")({
   component: ExplorerPage,
@@ -84,39 +78,29 @@ export const Route = createFileRoute("/projects/$projectId/explorer")({
 
 const FRESHNESS_OPTIONS: ExplorerFreshness[] = ["24h", "week", "month", "any"];
 
-function clamp(value: number, min: number, max: number) {
-  return Math.min(max, Math.max(min, value));
-}
-
 function ExplorerPage() {
   const { project } = useProject();
   const projectId = project.project.id;
   const { busyAction, startTask, saveExplorer } = useJobseeker();
   const events = useProjectEvents(projectId);
   const {
-    providers: debugProviders,
-    selection: debugSelection,
-    setSelection: setDebugSelection,
+    providers: explorerProviders,
+    selection: explorerSelection,
+    setSelection: setExplorerSelection,
+    providersLoading: explorerProvidersLoading,
   } = useModelChoice(projectId, "explorer");
-  const {
-    messages: debugMessages,
-    streamingContent: debugStreamingContent,
-    isStreaming: debugIsStreaming,
-    error: debugError,
-    send: sendDebugMessage,
-  } = useChat({ projectId, selection: debugSelection, initialMessages: project.chatMessages });
-
   const hasProfile = Boolean(project.profile);
   const savedDomains = project.explorer.domains;
   const savedIncludeAgentSuggestions = project.explorer.includeAgentSuggestions;
 
   const [draftDomains, setDraftDomains] = useState<ExplorerDomainConfig[]>(savedDomains);
+  const [threads, setThreads] = useState<ChatThread[]>([]);
+  const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [draftIncludeAgent, setDraftIncludeAgent] = useState(savedIncludeAgentSuggestions);
   const [addDomainInput, setAddDomainInput] = useState("");
   const [sorting, setSorting] = useState<SortingState>([{ id: "domain", desc: false }]);
   const [editingDomain, setEditingDomain] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [rawPanelOpen, setRawPanelOpen] = useState(false);
 
   useEffect(() => {
     setDraftDomains(savedDomains);
@@ -125,6 +109,22 @@ function ExplorerPage() {
   useEffect(() => {
     setDraftIncludeAgent(savedIncludeAgentSuggestions);
   }, [savedIncludeAgentSuggestions]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void listThreads(projectId, "explorer").then((rows) => {
+      if (cancelled) return;
+      setThreads(rows);
+      const runThreads = rows.filter((thread) => thread.title.startsWith("Run "));
+      const latestRun = [...runThreads].sort(
+        (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+      )[0];
+      setActiveThreadId((current) => current ?? latestRun?.id ?? rows[0]?.id ?? null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
 
   const shellHeader = useMemo(
     () => ({
@@ -141,8 +141,56 @@ function ExplorerPage() {
   );
 
   const stats = useMemo(() => getExplorerStats(draftDomains), [draftDomains]);
-  const liveFeed = useMemo(() => toExplorerFeed(events), [events]);
-  const rawLogs = useMemo(() => toExplorerRawLogs(events), [events]);
+  const runSessions = useMemo(() => buildExplorerRunSessions(threads, events), [threads, events]);
+  const activeRunTaskId = useMemo(
+    () => runSessions.find((session) => session.threadId === activeThreadId)?.taskId ?? null,
+    [runSessions, activeThreadId],
+  );
+  const runHistory = useMemo(() => runSessions.map((session) => session.thread), [runSessions]);
+  const liveFeed = useMemo(
+    () => toExplorerFeed(events, activeRunTaskId),
+    [events, activeRunTaskId],
+  );
+  const rawLogs = useMemo(
+    () => toExplorerRawLogs(events, activeRunTaskId),
+    [events, activeRunTaskId],
+  );
+  const explorerModelProviders = useMemo(
+    () => explorerProviders.filter((provider) => provider.id === "codex"),
+    [explorerProviders],
+  );
+  const fallbackExplorerSelection = useMemo(() => {
+    const codex = explorerModelProviders.find((provider) => provider.available);
+    const model = codex?.models[0];
+    if (!codex || !model) {
+      return undefined;
+    }
+    return {
+      provider: codex.id,
+      model: model.slug,
+      effort: model.capabilities.defaultEffort,
+    } satisfies ChatModelSelection;
+  }, [explorerModelProviders]);
+  const effectiveExplorerSelection =
+    explorerSelection?.provider === "codex" ? explorerSelection : fallbackExplorerSelection;
+
+  useEffect(() => {
+    if (!fallbackExplorerSelection || explorerSelection?.provider === "codex") {
+      return;
+    }
+    setExplorerSelection(fallbackExplorerSelection);
+  }, [explorerSelection?.provider, fallbackExplorerSelection, setExplorerSelection]);
+
+  const {
+    messages: debugMessages,
+    streamingContent: debugStreamingContent,
+    isStreaming: debugIsStreaming,
+    send: sendDebugMessage,
+  } = useChat({
+    projectId,
+    threadId: activeThreadId ?? "",
+    selection: effectiveExplorerSelection,
+  });
 
   const isDirty = useMemo(
     () =>
@@ -201,7 +249,23 @@ function ExplorerPage() {
     if (isDirty) {
       await persistDraft();
     }
-    await startTask({ projectId, type: "explorer_discovery" }, "explorer-discovery");
+
+    const runThread = await createThread(
+      projectId,
+      "explorer",
+      `Run ${new Date().toLocaleString()}`,
+    );
+    setThreads((prev) => [...prev, runThread]);
+    setActiveThreadId(runThread.id);
+
+    await startTask(
+      {
+        projectId,
+        type: "explorer_discovery",
+        modelSelection: effectiveExplorerSelection,
+      },
+      "explorer-discovery",
+    );
   }
 
   function resetDraftFromSaved() {
@@ -210,8 +274,8 @@ function ExplorerPage() {
   }
 
   return (
-    <div className="space-y-4">
-      <Tabs defaultValue="config" className="w-full">
+    <div className="flex h-full min-h-0 flex-col space-y-4">
+      <Tabs defaultValue="config" className="flex min-h-0 flex-1 flex-col">
         <div className="mb-4 flex items-center justify-between">
           <TabsList>
             <TabsTrigger value="config">Config</TabsTrigger>
@@ -223,10 +287,11 @@ function ExplorerPage() {
                 </Badge>
               ) : null}
             </TabsTrigger>
+            <TabsTrigger value="manage">Manage</TabsTrigger>
           </TabsList>
         </div>
 
-        <TabsContent value="config">
+        <TabsContent value="config" className="m-0 min-h-0 flex-1 overflow-y-auto">
           <ConfigTab
             domains={draftDomains}
             stats={stats}
@@ -238,9 +303,14 @@ function ExplorerPage() {
             sorting={sorting}
             setSorting={setSorting}
             includeAgentSuggestions={draftIncludeAgent}
+            modelProviders={explorerModelProviders}
+            modelSelection={effectiveExplorerSelection}
+            modelProvidersLoading={explorerProvidersLoading}
             isDirty={isDirty}
             busyAction={busyAction}
             hasProfile={hasProfile}
+            hasExplorerModel={Boolean(effectiveExplorerSelection)}
+            onModelSelectionChange={setExplorerSelection}
             onSave={() => void persistDraft()}
             onRun={() => void handleRunExplorer()}
             onDiscard={resetDraftFromSaved}
@@ -248,8 +318,26 @@ function ExplorerPage() {
           />
         </TabsContent>
 
-        <TabsContent value="results">
+        <TabsContent value="results" className="m-0 min-h-0 flex-1 overflow-y-auto">
           <ResultsTab domains={savedDomains} jobs={project.jobs} matches={project.jobMatches} />
+        </TabsContent>
+
+        <TabsContent value="manage" className="m-0 min-h-0 flex-1 overflow-y-auto">
+          <ManageTab
+            sessions={runHistory}
+            activeThreadId={activeThreadId}
+            onSelectSession={setActiveThreadId}
+            logs={rawLogs}
+            feed={liveFeed}
+            isRunning={busyAction === "explorer-discovery"}
+            debugProviders={explorerModelProviders}
+            debugSelection={effectiveExplorerSelection}
+            onDebugSelectionChange={setExplorerSelection}
+            debugMessages={debugMessages}
+            debugStreamingContent={debugStreamingContent}
+            debugIsStreaming={debugIsStreaming}
+            onSendDebugMessage={sendDebugMessage}
+          />
         </TabsContent>
 
         <Sheet
@@ -299,22 +387,6 @@ function ExplorerPage() {
           </SheetContent>
         </Sheet>
       </Tabs>
-
-      <ExplorerRawPanel
-        logs={rawLogs}
-        feed={liveFeed}
-        isRunning={busyAction === "explorer-discovery"}
-        debugProviders={debugProviders}
-        debugSelection={debugSelection}
-        onDebugSelectionChange={setDebugSelection}
-        debugMessages={debugMessages}
-        debugStreamingContent={debugStreamingContent}
-        debugIsStreaming={debugIsStreaming}
-        debugError={debugError}
-        onSendDebugMessage={sendDebugMessage}
-        open={rawPanelOpen}
-        onOpenChange={setRawPanelOpen}
-      />
     </div>
   );
 }
@@ -325,7 +397,59 @@ interface ExplorerRawLogLine {
   text: string;
 }
 
-function ExplorerRawPanel({
+type SessionStreamItem =
+  | {
+      kind: "log";
+      id: string;
+      createdAt: string;
+      text: string;
+    }
+  | {
+      kind: "message";
+      id: string;
+      createdAt: string;
+      role: ChatMessage["role"];
+      content: string;
+    };
+
+function buildSessionStreamItems(
+  messages: ChatMessage[],
+  logs: ExplorerRawLogLine[],
+  streamingContent: string,
+): SessionStreamItem[] {
+  const items: SessionStreamItem[] = [
+    ...messages.map((message) => ({
+      kind: "message" as const,
+      id: message.id,
+      createdAt: message.createdAt,
+      role: message.role,
+      content: message.content,
+    })),
+    ...logs.map((log) => ({
+      kind: "log" as const,
+      id: `log_${log.id}`,
+      createdAt: log.createdAt,
+      text: log.text,
+    })),
+  ];
+
+  if (streamingContent.trim().length > 0) {
+    items.push({
+      kind: "message",
+      id: "streaming_assistant",
+      createdAt: new Date().toISOString(),
+      role: "assistant",
+      content: streamingContent,
+    });
+  }
+
+  return items.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+}
+
+function ManageTab({
+  sessions,
+  activeThreadId,
+  onSelectSession,
   logs,
   feed,
   isRunning,
@@ -335,11 +459,11 @@ function ExplorerRawPanel({
   debugMessages,
   debugStreamingContent,
   debugIsStreaming,
-  debugError,
   onSendDebugMessage,
-  open,
-  onOpenChange,
 }: {
+  sessions: ChatThread[];
+  activeThreadId: string | null;
+  onSelectSession: (threadId: string) => void;
   logs: ExplorerRawLogLine[];
   feed: ExplorerFeedItem[];
   isRunning: boolean;
@@ -349,179 +473,110 @@ function ExplorerRawPanel({
   debugMessages: ChatMessage[];
   debugStreamingContent: string;
   debugIsStreaming: boolean;
-  debugError: string | null;
   onSendDebugMessage: (content: string) => void;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
 }) {
-  const [panelHeightVh, setPanelHeightVh] = useState(60);
-  const resizeStateRef = useRef<{ startY: number; startHeightVh: number } | null>(null);
-
-  const handleResizeMove = useCallback((event: PointerEvent) => {
-    if (!resizeStateRef.current || typeof window === "undefined") {
-      return;
-    }
-    const deltaPixels = resizeStateRef.current.startY - event.clientY;
-    const deltaVh = (deltaPixels / window.innerHeight) * 100;
-    const nextVh = clamp(resizeStateRef.current.startHeightVh + deltaVh, 35, 92);
-    setPanelHeightVh(nextVh);
-  }, []);
-
-  const handleResizeEnd = useCallback(() => {
-    resizeStateRef.current = null;
-    if (typeof window === "undefined") {
-      return;
-    }
-    window.removeEventListener("pointermove", handleResizeMove);
-    window.removeEventListener("pointerup", handleResizeEnd);
-  }, [handleResizeMove]);
-
-  const handleResizeStart = useCallback(
-    (event: ReactPointerEvent<HTMLButtonElement>) => {
-      if (event.button !== 0 || typeof window === "undefined") {
-        return;
-      }
-      event.preventDefault();
-      resizeStateRef.current = {
-        startY: event.clientY,
-        startHeightVh: panelHeightVh,
-      };
-      window.addEventListener("pointermove", handleResizeMove);
-      window.addEventListener("pointerup", handleResizeEnd);
-    },
-    [handleResizeEnd, handleResizeMove, panelHeightVh],
-  );
-
-  useEffect(
-    () => () => {
-      if (typeof window === "undefined") {
-        return;
-      }
-      window.removeEventListener("pointermove", handleResizeMove);
-      window.removeEventListener("pointerup", handleResizeEnd);
-    },
-    [handleResizeEnd, handleResizeMove],
+  const streamItems = useMemo(
+    () => buildSessionStreamItems(debugMessages, logs, debugStreamingContent),
+    [debugMessages, logs, debugStreamingContent],
   );
 
   return (
-    <>
-      <div className="pointer-events-none fixed inset-x-3 bottom-3 z-40 flex justify-center sm:inset-x-6 sm:bottom-4">
-        <button
-          type="button"
-          onClick={() => onOpenChange(!open)}
-          className="pointer-events-auto flex w-full max-w-lg items-center justify-between gap-3 rounded-lg border bg-background/95 px-4 py-3 text-left shadow-xl backdrop-blur supports-[backdrop-filter]:bg-background/80"
-        >
-          <div>
-            <p className="text-sm font-medium">Explorer events</p>
-            <p className="text-xs text-muted-foreground">
-              Progress updates and debug logs from the current run.
+    <section className="grid h-full min-h-0 gap-4 lg:grid-cols-[minmax(0,0.22fr)_minmax(0,0.43fr)_minmax(0,0.35fr)]">
+      <section className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border bg-card shadow-sm">
+        <div className="border-b px-4 py-3">
+          <p className="text-sm font-medium">Explorer sessions</p>
+          <p className="text-xs text-muted-foreground">Each run creates a new Codex session.</p>
+        </div>
+        <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
+          {sessions.length === 0 ? (
+            <p className="rounded-md border border-dashed px-3 py-4 text-center text-xs text-muted-foreground">
+              No sessions yet. Run Explorer to start one.
             </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <Badge variant="outline">{feed.length + logs.length}</Badge>
-            {open ? <ChevronDown className="size-4" /> : <ChevronUp className="size-4" />}
-          </div>
-        </button>
-      </div>
+          ) : (
+            sessions.map((session) => (
+              <button
+                key={session.id}
+                type="button"
+                onClick={() => onSelectSession(session.id)}
+                className={`w-full rounded-md border px-3 py-2 text-left transition-colors ${
+                  session.id === activeThreadId
+                    ? "border-primary/50 bg-primary/10"
+                    : "border-border bg-background hover:bg-muted"
+                }`}
+              >
+                <p className="truncate text-sm font-medium text-foreground">
+                  {session.title.replace("Run ", "")}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {new Date(session.updatedAt).toLocaleString()}
+                </p>
+              </button>
+            ))
+          )}
+        </div>
+      </section>
 
-      <Sheet open={open} onOpenChange={onOpenChange}>
-        <SheetContent
-          side="bottom"
-          showCloseButton={false}
-          className="flex min-h-[35vh] max-h-[92vh] flex-col rounded-t-lg border-x border-t p-0"
-          style={{ height: `${panelHeightVh}vh` }}
-        >
-          <div className="flex items-center justify-center pt-2">
-            <button
-              type="button"
-              aria-label="Resize explorer panel"
-              onPointerDown={handleResizeStart}
-              className="h-1.5 w-16 cursor-ns-resize rounded-full bg-border/80 transition-colors hover:bg-border"
-            />
-          </div>
+      <section className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border bg-card shadow-sm">
+        <div className="border-b px-4 py-3">
+          <p className="text-sm font-medium">Session stream</p>
+          <p className="text-xs text-muted-foreground">
+            Unified chat and Codex output for this run.
+          </p>
+        </div>
 
-          <SheetHeader className="border-b px-4 py-3">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <SheetTitle className="text-sm">Explorer events</SheetTitle>
-                <SheetDescription className="text-xs">
-                  Progress updates and low-level debug output.
-                </SheetDescription>
-              </div>
-              <div className="flex items-center gap-2">
-                <Badge variant="outline">{feed.length + logs.length}</Badge>
-                <Button variant="ghost" size="icon-sm" onClick={() => onOpenChange(false)}>
-                  <ChevronDown className="size-4" />
-                  <span className="sr-only">Close raw logs panel</span>
-                </Button>
-              </div>
-            </div>
-          </SheetHeader>
-
-          <Tabs defaultValue="progress" className="flex min-h-0 flex-1 flex-col">
-            <div className="border-b px-4 py-2">
-              <TabsList>
-                <TabsTrigger value="progress">Progress</TabsTrigger>
-                <TabsTrigger value="debug">Debug logs</TabsTrigger>
-              </TabsList>
-            </div>
-
-            <TabsContent value="progress" className="m-0 min-h-0 flex-1 overflow-y-auto px-4 py-3">
-              <ExplorerLiveFeed items={feed} isRunning={isRunning} />
-            </TabsContent>
-
-            <TabsContent value="debug" className="m-0 min-h-0 flex-1 px-4 py-3">
-              <div className="grid h-full min-h-0 gap-3 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
-                <section className="flex min-h-0 flex-col overflow-hidden rounded-md border bg-muted/20">
-                  <div className="border-b px-3 py-2">
-                    <p className="text-xs font-medium">Raw stream</p>
-                    <p className="text-[11px] text-muted-foreground">
-                      Verbose crawl and Codex trace output.
+        <div className="min-h-0 flex-1 overflow-y-auto p-3">
+          {streamItems.length === 0 ? (
+            <p className="flex h-full items-center justify-center rounded-md border border-dashed px-3 py-4 text-center text-xs text-muted-foreground">
+              No session output yet. Start a run or ask Codex.
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {streamItems.map((item) =>
+                item.kind === "log" ? (
+                  <div key={item.id} className="rounded-md border bg-muted/30 p-3">
+                    <p className="mb-1 text-[11px] text-muted-foreground">
+                      {new Date(item.createdAt).toLocaleTimeString()} · log
                     </p>
+                    <pre className="whitespace-pre-wrap text-xs leading-5">{item.text}</pre>
                   </div>
-                  <div className="min-h-0 flex-1 p-3">
-                    {logs.length === 0 ? (
-                      <p className="flex h-full items-center justify-center rounded-md border border-dashed px-3 py-4 text-center text-xs text-muted-foreground">
-                        No debug logs yet. Start an explorer run to stream logs here.
-                      </p>
-                    ) : (
-                      <pre className="h-full overflow-auto whitespace-pre-wrap rounded-md border bg-background/70 p-3 text-xs leading-5">
-                        {logs
-                          .map(
-                            (line) =>
-                              `${new Date(line.createdAt).toLocaleTimeString()} ${line.text}`,
-                          )
-                          .join("\n\n")}
-                      </pre>
-                    )}
+                ) : (
+                  <div key={item.id} className="flex justify-start">
+                    <div
+                      className={`max-w-[90%] rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap ${
+                        item.role === "user"
+                          ? "ml-auto bg-foreground text-background"
+                          : "bg-muted text-foreground"
+                      }`}
+                    >
+                      <p className="mb-1 text-[11px] opacity-70">{item.role}</p>
+                      {item.content}
+                    </div>
                   </div>
-                </section>
+                ),
+              )}
+            </div>
+          )}
+        </div>
 
-                <section className="flex min-h-0 flex-col overflow-hidden rounded-md border bg-background">
-                  <div className="border-b px-3 py-2">
-                    <p className="text-xs font-medium">Ask Codex</p>
-                    <p className="text-[11px] text-muted-foreground">
-                      Send a direct message while reviewing debug output.
-                    </p>
-                  </div>
-                  <ChatPanel
-                    className="min-h-0 flex-1"
-                    messages={debugMessages}
-                    streamingContent={debugStreamingContent}
-                    isStreaming={debugIsStreaming}
-                    error={debugError}
-                    onSend={onSendDebugMessage}
-                    providers={debugProviders}
-                    selection={debugSelection}
-                    onSelectionChange={onDebugSelectionChange}
-                  />
-                </section>
-              </div>
-            </TabsContent>
-          </Tabs>
-        </SheetContent>
-      </Sheet>
-    </>
+        <ChatInput
+          onSend={onSendDebugMessage}
+          disabled={debugIsStreaming}
+          providers={debugProviders}
+          selection={debugSelection}
+          onSelectionChange={onDebugSelectionChange}
+        />
+      </section>
+
+      <section className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border bg-card shadow-sm">
+        <div className="border-b px-4 py-3">
+          <p className="text-sm font-medium">Timeline</p>
+          <p className="text-xs text-muted-foreground">Progress events for the selected session.</p>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto p-3">
+          <ExplorerLiveFeed items={feed} isRunning={isRunning} />
+        </div>
+      </section>
+    </section>
   );
 }
 
@@ -538,9 +593,14 @@ interface ConfigTabProps {
   sorting: SortingState;
   setSorting: (value: SortingState) => void;
   includeAgentSuggestions: boolean;
+  modelProviders: ProviderOption[];
+  modelSelection?: ChatModelSelection;
+  modelProvidersLoading: boolean;
   isDirty: boolean;
   busyAction: string | null;
   hasProfile: boolean;
+  hasExplorerModel: boolean;
+  onModelSelectionChange: (selection: ChatModelSelection) => void;
   onSave: () => void;
   onRun: () => void;
   onDiscard: () => void;
@@ -558,9 +618,14 @@ function ConfigTab({
   sorting,
   setSorting,
   includeAgentSuggestions,
+  modelProviders,
+  modelSelection,
+  modelProvidersLoading,
   isDirty,
   busyAction,
   hasProfile,
+  hasExplorerModel,
+  onModelSelectionChange,
   onSave,
   onRun,
   onDiscard,
@@ -671,6 +736,15 @@ function ConfigTab({
           </Badge>
         </div>
         <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 rounded-md border bg-muted/25 px-2 py-1">
+            <span className="text-xs text-muted-foreground">Explorer model</span>
+            <ProviderModelPicker
+              providers={modelProviders}
+              selection={modelSelection}
+              disabled={modelProvidersLoading || busyAction === "explorer-discovery"}
+              onSelectionChange={onModelSelectionChange}
+            />
+          </div>
           {isDirty ? (
             <>
               <Button variant="ghost" size="sm" onClick={onDiscard}>
@@ -691,6 +765,7 @@ function ConfigTab({
             size="sm"
             disabled={
               !hasProfile ||
+              !hasExplorerModel ||
               stats.enabledCount === 0 ||
               busyAction === "save-explorer" ||
               busyAction === "explorer-discovery"
@@ -779,6 +854,12 @@ interface ExplorerFeedItem {
   tone: "info" | "success" | "error";
   label: string;
   detail?: string;
+}
+
+interface ExplorerRunSession {
+  thread: ChatThread;
+  threadId: string;
+  taskId: string | null;
 }
 
 function ExplorerLiveFeed({ items, isRunning }: { items: ExplorerFeedItem[]; isRunning: boolean }) {
@@ -1285,8 +1366,35 @@ function extractHost(url: string): string | null {
   }
 }
 
-function toExplorerFeed(events: RuntimeEvent[]): ExplorerFeedItem[] {
-  const taskId = latestExplorerTaskId(events);
+function buildExplorerRunSessions(
+  threads: ChatThread[],
+  events: RuntimeEvent[],
+): ExplorerRunSession[] {
+  const runThreads = [...threads]
+    .filter((thread) => thread.title.startsWith("Run "))
+    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+
+  const startedRuns = events
+    .filter((event) => event.type === "task.started")
+    .flatMap((event) => {
+      const payload = event.payload as Record<string, unknown>;
+      const taskType = typeof payload.taskType === "string" ? payload.taskType : null;
+      const taskId = typeof payload.taskId === "string" ? payload.taskId : null;
+      if (taskType !== "explorer_discovery" || !taskId) {
+        return [];
+      }
+      return [{ taskId, createdAt: event.createdAt }] as const;
+    })
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+  return runThreads.map((thread, index) => ({
+    thread,
+    threadId: thread.id,
+    taskId: startedRuns[index]?.taskId ?? null,
+  }));
+}
+
+function toExplorerFeed(events: RuntimeEvent[], taskId: string | null): ExplorerFeedItem[] {
   if (!taskId) {
     return [];
   }
@@ -1397,8 +1505,7 @@ function toExplorerFeed(events: RuntimeEvent[]): ExplorerFeedItem[] {
   return filtered.slice(0, 40).reverse();
 }
 
-function toExplorerRawLogs(events: RuntimeEvent[]): ExplorerRawLogLine[] {
-  const taskId = latestExplorerTaskId(events);
+function toExplorerRawLogs(events: RuntimeEvent[], taskId: string | null): ExplorerRawLogLine[] {
   if (!taskId) {
     return [];
   }
@@ -1421,7 +1528,18 @@ function toExplorerRawLogs(events: RuntimeEvent[]): ExplorerRawLogLine[] {
     const domain = typeof payload.domain === "string" ? payload.domain : "unknown-domain";
     const query = typeof payload.query === "string" ? payload.query : "query";
     const step = typeof payload.step === "number" ? payload.step : null;
+    const model = typeof payload.model === "string" ? payload.model : "unknown-model";
+    const effort = typeof payload.effort === "string" ? payload.effort : "unknown-effort";
     const retry = payload.retry === true ? " retry" : "";
+
+    if (phase === "query_started") {
+      out.push({
+        id: event.id,
+        createdAt: event.createdAt,
+        text: `[query_started] ${domain} | ${query}\nmodel=${model} effort=${effort}`,
+      });
+      continue;
+    }
 
     if (phase === "codex_raw") {
       const raw = typeof payload.raw === "string" ? payload.raw : "";
@@ -1449,21 +1567,4 @@ function toExplorerRawLogs(events: RuntimeEvent[]): ExplorerRawLogLine[] {
   }
 
   return out.slice(0, 120).reverse();
-}
-
-function latestExplorerTaskId(events: RuntimeEvent[]): string | null {
-  for (const event of events) {
-    if (event.type !== "task.started") {
-      continue;
-    }
-
-    const payload = event.payload as Record<string, unknown>;
-    const taskType = typeof payload.taskType === "string" ? payload.taskType : null;
-    const taskId = typeof payload.taskId === "string" ? payload.taskId : null;
-    if (taskType === "explorer_discovery" && taskId) {
-      return taskId;
-    }
-  }
-
-  return null;
 }

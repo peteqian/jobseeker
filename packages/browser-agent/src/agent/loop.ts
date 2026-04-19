@@ -1,3 +1,5 @@
+import { copyFileSync, existsSync, mkdirSync } from "node:fs";
+import path from "node:path";
 import { executeAction } from "../actions/execute";
 import { actionSchemas, type Action, type ActionName } from "../actions/types";
 import type { LaunchOptions } from "../cdp/launch";
@@ -6,9 +8,13 @@ import { formatSnapshotForLLM, serializePage } from "../dom/serialize";
 import { SYSTEM_PROMPT } from "./prompts";
 
 interface CodexRequest {
+  binaryPath?: string;
   model: string;
   prompt: string;
   effort?: string;
+  cwd?: string;
+  codexHome?: string;
+  codexAuthHome?: string;
 }
 
 interface CodexDecision {
@@ -18,6 +24,7 @@ interface CodexDecision {
 
 export interface AgentOptions {
   task: string;
+  codexBin?: string;
   model?: string;
   effort?: string;
   maxSteps?: number;
@@ -27,6 +34,9 @@ export interface AgentOptions {
   session?: BrowserSession;
   onStep?: (info: StepInfo) => void;
   onCodexOutput?: (info: CodexOutputInfo) => void;
+  codexCwd?: string;
+  codexHome?: string;
+  codexAuthHome?: string;
 }
 
 export interface StepInfo {
@@ -260,18 +270,78 @@ function containsUsageLimitError(text: string): boolean {
   return text.toLowerCase().includes("usage limit");
 }
 
+function ensureCodexAuthInHome(codexHome: string, sourceHome?: string): void {
+  mkdirSync(codexHome, { recursive: true });
+  const homeDir = process.env.HOME;
+  if (!homeDir) {
+    return;
+  }
+
+  const normalizedSourceHome = sourceHome?.trim();
+
+  const candidates: Array<{ src: string; dest: string }> = [
+    ...(normalizedSourceHome
+      ? [
+          {
+            src: path.join(normalizedSourceHome, "auth.json"),
+            dest: path.join(codexHome, "auth.json"),
+          },
+          {
+            src: path.join(normalizedSourceHome, "config.toml"),
+            dest: path.join(codexHome, "config.toml"),
+          },
+        ]
+      : []),
+    { src: path.join(homeDir, ".codex", "auth.json"), dest: path.join(codexHome, "auth.json") },
+    {
+      src: path.join(homeDir, ".codex", "config.toml"),
+      dest: path.join(codexHome, "config.toml"),
+    },
+    {
+      src: path.join(homeDir, ".config", "codex", "auth.json"),
+      dest: path.join(codexHome, "auth.json"),
+    },
+    {
+      src: path.join(homeDir, ".config", "codex", "config.toml"),
+      dest: path.join(codexHome, "config.toml"),
+    },
+  ];
+
+  for (const { src, dest } of candidates) {
+    if (!existsSync(src) || existsSync(dest)) {
+      continue;
+    }
+    copyFileSync(src, dest);
+  }
+}
+
 async function callCodex(request: CodexRequest): Promise<string> {
-  const binPath = process.env.CODEX_BIN ?? "codex";
-  const args = [binPath, "exec", "--ephemeral", "-s", "read-only", "--model", request.model];
+  const binPath = request.binaryPath?.trim() || process.env.CODEX_BIN || "codex";
+  const args = [
+    binPath,
+    "exec",
+    "--ephemeral",
+    "-s",
+    "read-only",
+    "--skip-git-repo-check",
+    "--model",
+    request.model,
+  ];
   if (request.effort) {
     args.push("--config", `model_reasoning_effort="${request.effort}"`);
   }
   args.push("-");
 
+  if (request.codexHome) {
+    ensureCodexAuthInHome(request.codexHome, request.codexAuthHome);
+  }
+
   const proc = Bun.spawn(args, {
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
+    ...(request.cwd ? { cwd: request.cwd } : {}),
+    ...(request.codexHome ? { env: { ...process.env, CODEX_HOME: request.codexHome } } : {}),
   });
 
   proc.stdin.write(new TextEncoder().encode(request.prompt));
@@ -409,7 +479,15 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
 
       let decision: CodexDecision;
       try {
-        const raw = await callCodex({ model, prompt, effort: options.effort });
+        const raw = await callCodex({
+          binaryPath: options.codexBin,
+          model,
+          prompt,
+          effort: options.effort,
+          cwd: options.codexCwd,
+          codexHome: options.codexHome,
+          codexAuthHome: options.codexAuthHome,
+        });
         options.onCodexOutput?.({
           step,
           raw,
