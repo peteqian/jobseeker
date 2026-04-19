@@ -37,6 +37,9 @@ npm-debug.log*
 # Tanstack
 .tanstack
 
+# Generated
+routeTree.gen.ts
+
 # Misc
 .DS_Store
 *.pem
