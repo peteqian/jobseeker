@@ -7,7 +7,7 @@ import { buttonVariants } from "@/components/ui/button-variants";
 import { projectRouteId } from "@/lib/project-route";
 import { getProjectStages } from "@/lib/project";
 import { useMemo } from "react";
-import { useShellHeader } from "@/providers/shell-header-context";
+import { useShellHeaderMeta } from "@/providers/shell-header-context";
 import { useProject } from "@/providers/project-context";
 
 export const Route = createFileRoute("/projects/$projectId/")({
@@ -27,7 +27,7 @@ function WorkspaceOverviewPage() {
     [project.project.title],
   );
 
-  useShellHeader(shellHeader);
+  useShellHeaderMeta(shellHeader);
 
   return (
     <div className="mx-auto max-w-6xl space-y-5 lg:space-y-6">

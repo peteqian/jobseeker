@@ -1,10 +1,8 @@
 import { defineConfig } from "drizzle-kit";
+import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(__dirname, ".");
-const dataDir = process.env.DATA_DIR ?? path.join(repoRoot, ".jobseeker-data");
+const dataDir = process.env.DATA_DIR ?? path.join(os.homedir(), ".jobseeker");
 const dbPath = path.join(dataDir, "jobseeker.sqlite");
 
 export default defineConfig({

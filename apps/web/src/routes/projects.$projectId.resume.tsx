@@ -18,7 +18,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { useJobseeker } from "@/providers/jobseeker-hooks";
-import { useShellHeader } from "@/providers/shell-header-context";
+import { useShellHeaderMeta } from "@/providers/shell-header-context";
 import { useProject } from "@/providers/project-context";
 import type { ResumeVersion } from "@jobseeker/contracts";
 
@@ -55,7 +55,7 @@ function ResumePage() {
     [],
   );
 
-  useShellHeader(shellHeader);
+  useShellHeaderMeta(shellHeader);
 
   const isBusy =
     busyAction === "upload-resume" ||

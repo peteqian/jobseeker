@@ -8,7 +8,6 @@ import {
   LayoutGrid,
   MessageSquare,
   Plus,
-  Radar,
   Settings,
   Sparkles,
   Upload,
@@ -49,12 +48,15 @@ import {
 
 import { projectRouteId } from "@/lib/project-route";
 import { useJobseeker } from "@/providers/jobseeker-hooks";
-import { ShellHeaderProvider, useShellHeaderContext } from "@/providers/shell-header-context";
+import {
+  ShellHeaderActionsHost,
+  ShellHeaderProvider,
+  useShellHeaderContext,
+} from "@/providers/shell-header-context";
 
 const primaryNavigation = [
   { to: "/projects", label: "Projects", icon: Workflow },
   { to: "/documents", label: "Documents", icon: Files },
-  { to: "/activity", label: "Activity", icon: Radar },
 ] as const;
 
 const projectSteps = [
@@ -326,7 +328,7 @@ function AppLayoutInner() {
               </div>
             </div>
 
-            {pageMeta.action ?? null}
+            <ShellHeaderActionsHost />
 
             {isProjectIndexRoute ? (
               <Button size="sm" onClick={() => setCreateDialogOpen(true)}>

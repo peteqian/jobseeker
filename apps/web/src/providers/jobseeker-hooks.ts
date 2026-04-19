@@ -90,6 +90,13 @@ function allEventsQueryOptions() {
   };
 }
 
+function isQueryCancelledError(caughtError: unknown): boolean {
+  return (
+    caughtError instanceof Error &&
+    (caughtError.name === "CancelledError" || caughtError.message === "CancelledError")
+  );
+}
+
 function useJobseekerActionMutation<TData, TVariables extends ActionVariables>(options: {
   mutationFn: (variables: TVariables) => Promise<TData>;
   onSuccess?: (data: TData, variables: TVariables) => Promise<void> | void;
@@ -134,8 +141,15 @@ export function useJobseeker(): JobseekerValue {
   const refreshProjects = React.useCallback(
     async (_preferredProjectId?: string) => {
       void _preferredProjectId;
-      await queryClient.invalidateQueries({ queryKey: projectsQueryKey });
-      return queryClient.fetchQuery(projectsQueryOptions());
+      try {
+        await queryClient.invalidateQueries({ queryKey: projectsQueryKey });
+        return await queryClient.fetchQuery(projectsQueryOptions());
+      } catch (caughtError) {
+        if (isQueryCancelledError(caughtError)) {
+          return queryClient.getQueryData<ProjectSnapshot[]>(projectsQueryKey) ?? [];
+        }
+        throw caughtError;
+      }
     },
     [queryClient],
   );
@@ -410,7 +424,12 @@ export function useProjectEvents(projectId: string | null) {
       queryClient.setQueryData<RuntimeEvent[]>(allEventsQueryKey, (current = []) =>
         current.some((entry) => entry.id === event.id) ? current : [event, ...current],
       );
-      void refreshProjects(projectId);
+      void refreshProjects(projectId).catch((caughtError) => {
+        if (isQueryCancelledError(caughtError)) {
+          return;
+        }
+        console.error("Failed to refresh projects after event", caughtError);
+      });
     };
 
     for (const type of types) {

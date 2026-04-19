@@ -9,7 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 
 import { getRankedJobs, latestDocument } from "@/lib/project";
 import { useJobseeker } from "@/providers/jobseeker-hooks";
-import { useShellHeader } from "@/providers/shell-header-context";
+import { useShellHeaderMeta } from "@/providers/shell-header-context";
 import { useProject } from "@/providers/project-context";
 
 export const Route = createFileRoute("/projects/$projectId/tailoring")({
@@ -31,7 +31,7 @@ function TailoringPage() {
     [],
   );
 
-  useShellHeader(shellHeader);
+  useShellHeaderMeta(shellHeader);
 
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
 

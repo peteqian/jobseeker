@@ -11,7 +11,6 @@
 import { Route as rootRouteImport } from "./routes/__root"
 import { Route as SettingsRouteImport } from "./routes/settings"
 import { Route as DocumentsRouteImport } from "./routes/documents"
-import { Route as ActivityRouteImport } from "./routes/activity"
 import { Route as IndexRouteImport } from "./routes/index"
 import { Route as ProjectsIndexRouteImport } from "./routes/projects.index"
 import { Route as ProjectsProjectIdRouteImport } from "./routes/projects.$projectId"
@@ -30,11 +29,6 @@ const SettingsRoute = SettingsRouteImport.update({
 const DocumentsRoute = DocumentsRouteImport.update({
   id: "/documents",
   path: "/documents",
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ActivityRoute = ActivityRouteImport.update({
-  id: "/activity",
-  path: "/activity",
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -88,7 +82,6 @@ const ProjectsProjectIdCoachRoute = ProjectsProjectIdCoachRouteImport.update({
 
 export interface FileRoutesByFullPath {
   "/": typeof IndexRoute
-  "/activity": typeof ActivityRoute
   "/documents": typeof DocumentsRoute
   "/settings": typeof SettingsRoute
   "/projects/$projectId": typeof ProjectsProjectIdRouteWithChildren
@@ -102,7 +95,6 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   "/": typeof IndexRoute
-  "/activity": typeof ActivityRoute
   "/documents": typeof DocumentsRoute
   "/settings": typeof SettingsRoute
   "/projects": typeof ProjectsIndexRoute
@@ -116,7 +108,6 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   "/": typeof IndexRoute
-  "/activity": typeof ActivityRoute
   "/documents": typeof DocumentsRoute
   "/settings": typeof SettingsRoute
   "/projects/$projectId": typeof ProjectsProjectIdRouteWithChildren
@@ -132,7 +123,6 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | "/"
-    | "/activity"
     | "/documents"
     | "/settings"
     | "/projects/$projectId"
@@ -146,7 +136,6 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | "/"
-    | "/activity"
     | "/documents"
     | "/settings"
     | "/projects"
@@ -159,7 +148,6 @@ export interface FileRouteTypes {
   id:
     | "__root__"
     | "/"
-    | "/activity"
     | "/documents"
     | "/settings"
     | "/projects/$projectId"
@@ -174,7 +162,6 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  ActivityRoute: typeof ActivityRoute
   DocumentsRoute: typeof DocumentsRoute
   SettingsRoute: typeof SettingsRoute
   ProjectsProjectIdRoute: typeof ProjectsProjectIdRouteWithChildren
@@ -195,13 +182,6 @@ declare module "@tanstack/react-router" {
       path: "/documents"
       fullPath: "/documents"
       preLoaderRoute: typeof DocumentsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    "/activity": {
-      id: "/activity"
-      path: "/activity"
-      fullPath: "/activity"
-      preLoaderRoute: typeof ActivityRouteImport
       parentRoute: typeof rootRouteImport
     }
     "/": {
@@ -293,7 +273,6 @@ const ProjectsProjectIdRouteWithChildren =
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  ActivityRoute: ActivityRoute,
   DocumentsRoute: DocumentsRoute,
   SettingsRoute: SettingsRoute,
   ProjectsProjectIdRoute: ProjectsProjectIdRouteWithChildren,

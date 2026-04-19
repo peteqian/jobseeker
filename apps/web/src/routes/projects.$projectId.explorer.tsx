@@ -68,7 +68,7 @@ import {
 import { useChat } from "@/hooks/use-chat";
 import { useModelChoice } from "@/hooks/use-model-choice";
 import { useJobseeker, useProjectEvents } from "@/providers/jobseeker-hooks";
-import { useShellHeader } from "@/providers/shell-header-context";
+import { useShellHeaderMeta } from "@/providers/shell-header-context";
 import { useProject } from "@/providers/project-context";
 import { createThread, listThreads } from "@/rpc/chat-client";
 
@@ -133,7 +133,7 @@ function ExplorerPage() {
     }),
     [],
   );
-  useShellHeader(shellHeader);
+  useShellHeaderMeta(shellHeader);
 
   const querySuggestions = useMemo(
     () => getExplorerQuerySuggestions(project.profile),
@@ -185,6 +185,7 @@ function ExplorerPage() {
     messages: debugMessages,
     streamingContent: debugStreamingContent,
     isStreaming: debugIsStreaming,
+    error: debugError,
     send: sendDebugMessage,
     interrupt: interruptDebugMessage,
   } = useChat({
@@ -337,6 +338,7 @@ function ExplorerPage() {
             debugMessages={debugMessages}
             debugStreamingContent={debugStreamingContent}
             debugIsStreaming={debugIsStreaming}
+            debugError={debugError}
             onSendDebugMessage={sendDebugMessage}
             onInterruptDebugMessage={interruptDebugMessage}
           />
@@ -461,6 +463,7 @@ function ManageTab({
   debugMessages,
   debugStreamingContent,
   debugIsStreaming,
+  debugError,
   onSendDebugMessage,
   onInterruptDebugMessage,
 }: {
@@ -476,6 +479,7 @@ function ManageTab({
   debugMessages: ChatMessage[];
   debugStreamingContent: string;
   debugIsStreaming: boolean;
+  debugError: string | null;
   onSendDebugMessage: (content: string) => void;
   onInterruptDebugMessage: () => void;
 }) {
@@ -529,6 +533,11 @@ function ManageTab({
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto p-3">
+          {debugError ? (
+            <div className="mb-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+              {debugError}
+            </div>
+          ) : null}
           {streamItems.length === 0 ? (
             <p className="flex h-full items-center justify-center rounded-md border border-dashed px-3 py-4 text-center text-xs text-muted-foreground">
               No session output yet. Start a run or ask Codex.
@@ -565,7 +574,7 @@ function ManageTab({
         <ChatInput
           onSend={onSendDebugMessage}
           onInterrupt={onInterruptDebugMessage}
-          disabled={debugIsStreaming}
+          disabled={debugIsStreaming || Boolean(debugError)}
           providers={debugProviders}
           selection={debugSelection}
           onSelectionChange={onDebugSelectionChange}

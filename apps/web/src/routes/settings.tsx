@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
-import { useShellHeader } from "@/providers/shell-header-context";
+import { useShellHeaderMeta } from "@/providers/shell-header-context";
 import { useTheme } from "@/components/theme-provider";
 import {
   type ConnectionStatus,
@@ -127,7 +127,7 @@ function isProviderDirty(
 }
 
 function SettingsPage() {
-  useShellHeader(SETTINGS_HEADER);
+  useShellHeaderMeta(SETTINGS_HEADER);
   const queryClient = useQueryClient();
   const { theme, setTheme, routerDevtools, setRouterDevtools } = useTheme();
   const [connections, setConnections] = useState<ConnectionStatus[]>([]);

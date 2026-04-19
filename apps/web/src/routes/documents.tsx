@@ -27,7 +27,7 @@ import {
 } from "@/components/ui/table";
 
 import { useJobseeker } from "@/providers/jobseeker-hooks";
-import { useShellHeader } from "@/providers/shell-header-context";
+import { useShellHeaderMeta } from "@/providers/shell-header-context";
 import type { ProjectDocument, ProjectDocumentKind } from "@jobseeker/contracts";
 
 interface DocumentRow {
@@ -41,11 +41,7 @@ const documentKindLabels: Record<ProjectDocumentKind, string> = {
   tailored_resume: "Tailored Resume",
 };
 
-const documentKindOrder: ProjectDocumentKind[] = [
-  "resume_source",
-  "extracted_text",
-  "tailored_resume",
-];
+const documentKindOrder: ProjectDocumentKind[] = ["resume_source", "tailored_resume"];
 
 export const Route = createFileRoute("/documents")({
   component: DocumentsPage,
@@ -57,7 +53,7 @@ const DOCUMENTS_HEADER = {
 };
 
 function DocumentsPage() {
-  useShellHeader(DOCUMENTS_HEADER);
+  useShellHeaderMeta(DOCUMENTS_HEADER);
   const { projects } = useJobseeker();
   const [sorting, setSorting] = useState<SortingState>([{ id: "createdAt", desc: true }]);
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
@@ -67,10 +63,12 @@ function DocumentsPage() {
     () =>
       projects
         .flatMap((project) =>
-          project.documents.map((document) => ({
-            document,
-            projectTitle: project.project.title,
-          })),
+          project.documents
+            .filter((document) => document.kind !== "extracted_text")
+            .map((document) => ({
+              document,
+              projectTitle: project.project.title,
+            })),
         )
         .sort((left, right) => {
           const kindDiff =
@@ -85,6 +83,7 @@ function DocumentsPage() {
   const columns = useMemo<ColumnDef<DocumentRow>[]>(
     () => [
       {
+        id: "name",
         accessorKey: "document.name",
         header: "Name",
         cell: ({ row }) => (
@@ -102,6 +101,7 @@ function DocumentsPage() {
         ),
       },
       {
+        id: "kind",
         accessorKey: "document.kind",
         header: "Type",
         cell: ({ row }) => (
@@ -112,6 +112,7 @@ function DocumentsPage() {
         },
       },
       {
+        id: "createdAt",
         accessorKey: "document.createdAt",
         header: ({ column }) => (
           <Button
@@ -166,10 +167,8 @@ function DocumentsPage() {
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input
               placeholder="Filter by name..."
-              value={(table.getColumn("document.name")?.getFilterValue() as string) ?? ""}
-              onChange={(event) =>
-                table.getColumn("document.name")?.setFilterValue(event.target.value)
-              }
+              value={(table.getColumn("name")?.getFilterValue() as string) ?? ""}
+              onChange={(event) => table.getColumn("name")?.setFilterValue(event.target.value)}
               className="pl-9"
             />
           </div>

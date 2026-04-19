@@ -12,7 +12,7 @@ const globalForDb = globalThis as unknown as {
 mkdirSync(dataDir, { recursive: true });
 
 export const sqlite = globalForDb.__jobseekerSqlite ?? new Database(dbPath);
-sqlite.exec("PRAGMA journal_mode = WAL");
+sqlite.run("PRAGMA journal_mode = WAL;");
 
 if (env.NODE_ENV !== "production") {
   globalForDb.__jobseekerSqlite = sqlite;

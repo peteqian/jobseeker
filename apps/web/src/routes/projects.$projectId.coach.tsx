@@ -15,7 +15,7 @@ import type { ChatStreamTopicUpdate } from "@/rpc/types";
 import { getResumeDoc } from "@/lib/project";
 import { useChat } from "@/hooks/use-chat";
 import { useJobseeker } from "@/providers/jobseeker-hooks";
-import { useShellHeader } from "@/providers/shell-header-context";
+import { useShellHeaderMeta } from "@/providers/shell-header-context";
 import { useProject } from "@/providers/project-context";
 import { createThread, listThreads } from "@/rpc/chat-client";
 
@@ -38,7 +38,7 @@ function ChatPage() {
     [],
   );
 
-  useShellHeader(shellHeader);
+  useShellHeaderMeta(shellHeader);
 
   const { providers, selection, setSelection } = useModelChoice(projectId, "coach");
   const [threads, setThreads] = useState<ChatThread[]>([]);
