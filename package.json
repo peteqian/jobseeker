@@ -24,7 +24,7 @@
     "lint": "oxlint --report-unused-disable-directives",
     "format": "oxfmt",
     "fmt": "oxfmt",
-    "fmt:check": "oxfmt --check",
+    "fmt:check": "oxfmt --check --ignore-path .gitignore",
     "typecheck": "turbo typecheck",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
