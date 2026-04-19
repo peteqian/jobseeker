@@ -1,4 +1,4 @@
-import { Send } from "lucide-react";
+import { Send, Square } from "lucide-react";
 import { type KeyboardEvent, useRef, useState } from "react";
 import { type ChatModelSelection } from "@jobseeker/contracts";
 
@@ -10,6 +10,8 @@ import { Separator } from "@/components/ui/separator";
 
 interface ChatInputProps {
   onSend: (content: string) => void;
+  onInterrupt: () => void;
+  isStreaming?: boolean;
   disabled?: boolean;
   providers?: readonly ProviderOption[];
   selection?: ChatModelSelection;
@@ -18,6 +20,8 @@ interface ChatInputProps {
 
 export function ChatInput({
   onSend,
+  onInterrupt,
+  isStreaming,
   disabled,
   providers,
   selection,
@@ -119,15 +123,27 @@ export function ChatInput({
           </div>
 
           <div data-chat-composer-actions="right" className="flex items-center gap-2">
-            <Button
-              size="sm"
-              onClick={handleSend}
-              disabled={disabled || !value.trim()}
-              className="shrink-0 rounded-full px-3"
-              aria-label="Send message"
-            >
-              <Send className="size-4" />
-            </Button>
+            {isStreaming ? (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={onInterrupt}
+                className="shrink-0 rounded-full px-3"
+                aria-label="Interrupt message"
+              >
+                <Square className="size-4" />
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                onClick={handleSend}
+                disabled={disabled || !value.trim()}
+                className="shrink-0 rounded-full px-3"
+                aria-label="Send message"
+              >
+                <Send className="size-4" />
+              </Button>
+            )}
           </div>
         </div>
       </div>

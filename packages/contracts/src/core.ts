@@ -28,7 +28,10 @@ export type RuntimeEventType =
   | "task.failed"
   | "document.created"
   | "jobs.updated"
-  | "profile.updated";
+  | "profile.updated"
+  | "thread.command.dispatched"
+  | "thread.runtime.event"
+  | "thread.stream.event";
 
 export type JobSource = "seek" | "explorer";
 

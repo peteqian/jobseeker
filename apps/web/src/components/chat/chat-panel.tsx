@@ -12,6 +12,7 @@ interface ChatPanelProps {
   isStreaming: boolean;
   error: string | null;
   onSend: (content: string) => void;
+  onInterrupt: () => void;
   providers?: readonly ProviderOption[];
   selection?: ChatModelSelection;
   onSelectionChange?: (selection: ChatModelSelection) => void;
@@ -24,6 +25,7 @@ export function ChatPanel({
   isStreaming,
   error,
   onSend,
+  onInterrupt,
   providers,
   selection,
   onSelectionChange,
@@ -46,6 +48,8 @@ export function ChatPanel({
 
       <ChatInput
         onSend={onSend}
+        onInterrupt={onInterrupt}
+        isStreaming={isStreaming}
         disabled={isStreaming}
         providers={providers}
         selection={selection}

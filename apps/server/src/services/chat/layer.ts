@@ -1,238 +1,138 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import type {
   ChatModelSelection,
   ChatMessage,
+  ChatScope,
+  ChatThread,
   ProviderId,
-  ProviderModel,
+  RuntimeEventType,
   TopicFile,
   TopicFileMeta,
   StructuredProfile,
 } from "@jobseeker/contracts";
-import { CLAUDE_MODELS, CODEX_MODELS } from "@jobseeker/contracts";
+import { ProviderServiceLive } from "../../provider/layers/providerService";
+import { ProviderService } from "../../provider/services/providerService";
+import { resolveProviderModel, resolveReasoningEffort } from "../../provider/utils";
 
-import { env } from "../../env";
 import { makeId } from "../../lib/ids";
 import { buildSystemPrompt, parseTopicUpdates, stripTopicMarkers } from "../../prompts/chat";
 import { logError, logInfo, logWarn } from "../../lib/log";
+import { ensureCodexHomeDir, ensureScopeDir } from "../../lib/paths";
 import { readTopicFile, topicPath, writeTopicFile } from "../topics";
 import { db } from "../../db";
 import {
+  chatThreads,
   chatMessages,
   documents,
   insightCards,
+  providerSessionRuntime,
   profiles,
   projects,
   topicFiles,
+  events,
 } from "../../db/schema";
 
-import { ChatService, type ChatStreamEvent, type ChatProviderInfo } from "./service";
+import {
+  ChatService,
+  type ChatDispatchCommand,
+  type ChatProviderInfo,
+  type ChatStreamEvent,
+  type ThreadProjectionSnapshot,
+  type ThreadStreamEnvelope,
+  type ThreadStreamEvent,
+} from "./service";
+import {
+  appendThreadEvent,
+  getThreadProjection,
+  listThreadEvents,
+  recordThreadCommand,
+} from "./projectionStore";
 
 const now = () => new Date().toISOString();
 
-// ---------------------------------------------------------------------------
-// Provider abstraction
-// ---------------------------------------------------------------------------
-
-interface ChatProvider {
-  id: ProviderId;
-  models: ProviderModel[];
-  available(): boolean;
-  run(
-    prompt: string,
-    history: { role: string; content: string }[],
-    selection?: ChatModelSelection,
-  ): AsyncIterable<string> & {
-    result: Promise<{ text: string }>;
-  };
+interface ThreadEventSubscriber {
+  readonly id: number;
+  readonly threadId: string;
+  closed: boolean;
+  pending: ThreadStreamEnvelope[];
+  resolveNext: ((event: ThreadStreamEnvelope | null) => void) | null;
 }
 
-function resolveProviderModel(
-  models: readonly ProviderModel[],
-  selection?: ChatModelSelection,
-): ProviderModel {
-  return models.find((model) => model.slug === selection?.model) ?? models[0]!;
-}
+const threadEventSubscribers = new Map<number, ThreadEventSubscriber>();
+let nextThreadEventSubscriberId = 0;
 
-function resolveReasoningEffort(model: ProviderModel, selection?: ChatModelSelection): string {
-  const effort = selection?.effort;
-  return effort && model.capabilities.reasoningEffort.includes(effort)
-    ? effort
-    : model.capabilities.defaultEffort;
-}
-
-function makeCodexProvider(): ChatProvider {
-  const binPath = process.env.CODEX_BIN ?? "codex";
-
-  return {
-    id: "codex",
-    models: CODEX_MODELS,
-    available() {
-      try {
-        const proc = Bun.spawnSync([binPath, "--version"], { stdout: "pipe", stderr: "pipe" });
-        return proc.exitCode === 0;
-      } catch {
-        return false;
-      }
-    },
-    run(systemPrompt, history, selection) {
-      const parts: string[] = [systemPrompt, ""];
-      for (const msg of history.slice(0, -1)) {
-        parts.push(`${msg.role === "user" ? "User" : "Assistant"}: ${msg.content}`);
-      }
-      const last = history.at(-1);
-      if (last) parts.push(`User: ${last.content}`);
-
-      const model = resolveProviderModel(CODEX_MODELS, selection);
-      const effort = resolveReasoningEffort(model, selection);
-      const proc = Bun.spawn(
-        [
-          binPath,
-          "exec",
-          "--json",
-          "--ephemeral",
-          "-s",
-          "read-only",
-          "--model",
-          model.slug,
-          "--config",
-          `model_reasoning_effort="${effort}"`,
-          "-",
-        ],
-        {
-          stdin: "pipe",
-          stdout: "pipe",
-          stderr: "pipe",
-        },
-      );
-
-      proc.stdin.write(new TextEncoder().encode(parts.join("\n")));
-      proc.stdin.end();
-
-      let fullText = "";
-      const resultPromise = (async () => {
-        await proc.exited;
-        return { text: fullText };
-      })();
-
-      const stream = (async function* () {
-        const reader = proc.stdout.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-        let sawDeltas = false;
-
-        function* handleEvent(event: any): Generator<string> {
-          if (event.type === "response.output_text.delta" && event.delta) {
-            const delta = typeof event.delta === "string" ? event.delta : (event.delta?.text ?? "");
-            if (delta) {
-              sawDeltas = true;
-              fullText += delta;
-              yield delta;
-            }
-            return;
-          }
-          if (event.type === "item.completed" && event.item?.text && !sawDeltas) {
-            fullText += event.item.text;
-            yield event.item.text;
-          }
-        }
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split("\n");
-          buffer = lines.pop() ?? "";
-
-          for (const line of lines) {
-            if (!line.trim()) continue;
-            try {
-              yield* handleEvent(JSON.parse(line));
-            } catch {
-              // skip non-JSON lines
-            }
-          }
-        }
-
-        if (buffer.trim()) {
-          try {
-            yield* handleEvent(JSON.parse(buffer));
-          } catch {
-            // skip
-          }
-        }
-      })();
-
-      return Object.assign(stream, { result: resultPromise });
-    },
-  };
-}
-
-function makeClaudeProvider(): ChatProvider {
-  return {
-    id: "claude",
-    models: CLAUDE_MODELS,
-    available() {
-      return Boolean(env.ANTHROPIC_API_KEY);
-    },
-    run(systemPrompt, history, selection) {
-      let fullText = "";
-      let resolveResult: (r: { text: string }) => void;
-      const resultPromise = new Promise<{ text: string }>((resolve) => {
-        resolveResult = resolve;
-      });
-
-      const messages = history.map((msg) => ({
-        role: msg.role as "user" | "assistant",
-        content: msg.content,
-      }));
-
-      const stream = (async function* () {
-        const { default: Anthropic } = await import("@anthropic-ai/sdk");
-        const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
-        const model = resolveProviderModel(CLAUDE_MODELS, selection);
-
-        const anthropicModel =
-          model.slug === "claude-haiku-4-5"
-            ? "claude-haiku-4-5-20251001"
-            : "claude-sonnet-4-20250514";
-
-        const response = client.messages.stream({
-          model: anthropicModel,
-          max_tokens: 1024,
-          system: systemPrompt,
-          messages,
-        });
-
-        for await (const event of response) {
-          if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
-            fullText += event.delta.text;
-            yield event.delta.text;
-          }
-        }
-
-        resolveResult!({ text: fullText });
-      })();
-
-      return Object.assign(stream, { result: resultPromise });
-    },
-  };
-}
-
-const allProviders: ChatProvider[] = [makeCodexProvider(), makeClaudeProvider()];
-
-function pickProvider(id?: ProviderId): ChatProvider | null {
-  if (id) {
-    const provider = allProviders.find((item) => item.id === id && item.available()) ?? null;
-    if (!provider) {
-      logWarn("chat provider unavailable", { providerId: id });
+function publishThreadEvent(threadId: string, event: ThreadStreamEnvelope): void {
+  for (const subscriber of threadEventSubscribers.values()) {
+    if (subscriber.closed || subscriber.threadId !== threadId) {
+      continue;
     }
-    return provider;
+
+    if (subscriber.resolveNext) {
+      const resolve = subscriber.resolveNext;
+      subscriber.resolveNext = null;
+      resolve(event);
+      continue;
+    }
+
+    subscriber.pending.push(event);
+  }
+}
+
+async function nextThreadEvent(
+  subscriber: ThreadEventSubscriber,
+): Promise<ThreadStreamEnvelope | null> {
+  if (subscriber.pending.length > 0) {
+    return subscriber.pending.shift() ?? null;
+  }
+  if (subscriber.closed) {
+    return null;
   }
 
-  return allProviders.find((item) => item.available()) ?? null;
+  return new Promise((resolve) => {
+    subscriber.resolveNext = resolve;
+  });
+}
+
+function stopThreadEventSubscription(subscriber: ThreadEventSubscriber): void {
+  if (subscriber.closed) {
+    return;
+  }
+
+  subscriber.closed = true;
+  threadEventSubscribers.delete(subscriber.id);
+  if (subscriber.resolveNext) {
+    const resolve = subscriber.resolveNext;
+    subscriber.resolveNext = null;
+    resolve(null);
+  }
+}
+
+function subscribeThreadEvents(threadId: string): AsyncIterable<ThreadStreamEnvelope> {
+  const subscriber: ThreadEventSubscriber = {
+    id: ++nextThreadEventSubscriberId,
+    threadId,
+    closed: false,
+    pending: [],
+    resolveNext: null,
+  };
+  threadEventSubscribers.set(subscriber.id, subscriber);
+
+  return (async function* () {
+    try {
+      while (true) {
+        const event = await nextThreadEvent(subscriber);
+        if (!event) {
+          break;
+        }
+        yield event;
+      }
+    } finally {
+      stopThreadEventSubscription(subscriber);
+    }
+  })();
 }
 
 // ---------------------------------------------------------------------------
@@ -302,309 +202,614 @@ function toTopicMeta(row: {
   };
 }
 
+function toThread(row: typeof chatThreads.$inferSelect): ChatThread {
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    scope: row.scope as ChatScope,
+    title: row.title,
+    status: row.status as ChatThread["status"],
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+function threadDefaultTitle(scope: ChatScope): string {
+  return scope === "coach" ? "Coach" : "Explorer";
+}
+
+async function ensureDefaultThread(projectId: string, scope: ChatScope): Promise<ChatThread> {
+  const existing = await db
+    .select()
+    .from(chatThreads)
+    .where(and(eq(chatThreads.projectId, projectId), eq(chatThreads.scope, scope)))
+    .orderBy(asc(chatThreads.createdAt))
+    .get();
+
+  if (existing) {
+    return toThread(existing);
+  }
+
+  const ts = now();
+  const id = makeId("thread");
+  await db.insert(chatThreads).values({
+    id,
+    projectId,
+    scope,
+    title: threadDefaultTitle(scope),
+    status: "active",
+    createdAt: ts,
+    updatedAt: ts,
+  });
+
+  return {
+    id,
+    projectId,
+    scope,
+    title: threadDefaultTitle(scope),
+    status: "active",
+    createdAt: ts,
+    updatedAt: ts,
+  };
+}
+
+async function getThread(threadId: string): Promise<typeof chatThreads.$inferSelect> {
+  const thread = await db.select().from(chatThreads).where(eq(chatThreads.id, threadId)).get();
+  if (!thread) {
+    throw new Error("Thread not found");
+  }
+  return thread;
+}
+
+async function touchRuntime(
+  threadId: string,
+  providerName: ProviderId,
+  payload: Record<string, unknown>,
+) {
+  const ts = now();
+  await db
+    .insert(providerSessionRuntime)
+    .values({
+      threadId,
+      providerName,
+      adapterKey: providerName,
+      status: "running",
+      lastSeenAt: ts,
+      resumeCursorJson: JSON.stringify({ threadId }),
+      runtimePayloadJson: JSON.stringify(payload),
+    })
+    .onConflictDoUpdate({
+      target: providerSessionRuntime.threadId,
+      set: {
+        status: "running",
+        lastSeenAt: ts,
+        runtimePayloadJson: JSON.stringify(payload),
+      },
+    });
+}
+
+async function writeRuntimeEvent(
+  projectId: string,
+  type: RuntimeEventType,
+  payload: Record<string, unknown>,
+) {
+  await db.insert(events).values({
+    id: makeId("event"),
+    projectId,
+    type,
+    createdAt: now(),
+    payloadJson: JSON.stringify(payload),
+  });
+}
+
+async function emitThreadEvent(
+  projectId: string,
+  threadId: string,
+  event: ThreadStreamEvent,
+): Promise<ThreadStreamEnvelope> {
+  const envelope = await appendThreadEvent(threadId, event);
+  await writeRuntimeEvent(projectId, "thread.stream.event", {
+    threadId,
+    sequence: envelope.sequence,
+    event,
+  });
+  publishThreadEvent(threadId, envelope);
+  return envelope;
+}
+
 // ---------------------------------------------------------------------------
 // Layer
 // ---------------------------------------------------------------------------
 
-export const ChatServiceLive = Layer.succeed(ChatService, {
-  listProviders: () =>
-    Effect.sync((): ChatProviderInfo[] =>
-      allProviders.map((p) => ({ id: p.id, available: p.available(), models: p.models })),
-    ),
+export const ChatServiceLive = Layer.effect(
+  ChatService,
+  Effect.gen(function* () {
+    const providerService = yield* ProviderService;
 
-  getMessages: (projectId: string) =>
-    Effect.promise(async (): Promise<ChatMessage[]> => {
-      const rows = await db
-        .select()
-        .from(chatMessages)
-        .where(eq(chatMessages.projectId, projectId))
-        .orderBy(asc(chatMessages.createdAt))
-        .all();
+    yield* Effect.sync(() => {
+      Effect.runFork(
+        Stream.runForEach(
+          Stream.fromAsyncIterable(providerService.streamEvents(), (err) =>
+            err instanceof Error ? err : new Error(String(err)),
+          ),
+          (event) =>
+            Effect.promise(async () => {
+              const thread = await getThread(event.threadId).catch(() => null);
+              if (!thread) {
+                return;
+              }
 
-      return rows.map((r) => ({
-        id: r.id,
-        projectId: r.projectId,
-        role: r.role as ChatMessage["role"],
-        content: r.content,
-        createdAt: r.createdAt,
-      }));
-    }),
+              const envelope = await appendThreadEvent(event.threadId, event);
+              publishThreadEvent(event.threadId, envelope);
+              await writeRuntimeEvent(thread.projectId, "thread.runtime.event", {
+                threadId: event.threadId,
+                sequence: envelope.sequence,
+                event,
+              });
+            }),
+        ),
+      );
+    });
 
-  sendMessage: (projectId: string, content: string, selection?: ChatModelSelection) => {
-    async function* generate(): AsyncGenerator<ChatStreamEvent> {
-      const turnId = makeId("turn");
-      const startedAt = Date.now();
-      const provider = pickProvider(selection?.provider);
-      if (!provider) {
-        logError("chat turn failed", {
-          turnId,
-          projectId,
-          reason: "no_provider_available",
-          requestedProviderId: selection?.provider,
-        });
-        throw new Error("No chat provider available");
-      }
-
-      const model = resolveProviderModel(provider.models, selection);
-      const effort = resolveReasoningEffort(model, selection);
-
-      const project = await db.select().from(projects).where(eq(projects.id, projectId)).get();
-      if (!project) {
-        logError("chat turn failed", {
-          turnId,
-          projectId,
-          providerId: provider.id,
-          reason: "project_not_found",
-        });
-        throw new Error("Project not found");
-      }
-      const projectSlug = project.slug ?? project.id;
-
-      logInfo("chat turn start", {
-        turnId,
-        projectId,
-        projectSlug,
-        providerId: provider.id,
-        model: model.slug,
-        effort,
-      });
-
-      // Save user message
-      const userMsgId = makeId("cmsg");
-      await db.insert(chatMessages).values({
-        id: userMsgId,
-        projectId,
-        role: "user",
-        content,
-        createdAt: now(),
-      });
-
-      // Load context
-      const [resumeText, profile, topics] = await Promise.all([
-        getResumeText(projectId),
-        getProfile(projectId),
-        getTopicsWithContent(projectId),
-      ]);
-
-      const systemPrompt = buildSystemPrompt({ resumeText, profile, topics });
-
-      // Load history
-      const history = await db
-        .select()
-        .from(chatMessages)
-        .where(eq(chatMessages.projectId, projectId))
-        .orderBy(asc(chatMessages.createdAt))
-        .all();
-
-      const recentHistory = history.slice(-30).map((msg) => ({
-        role: msg.role,
-        content: msg.content,
-      }));
-
-      try {
-        // Stream from provider
-        const providerStream = provider.run(systemPrompt, recentHistory, selection);
-
-        for await (const chunk of providerStream) {
-          yield { type: "delta" as const, chunk };
+    function buildSendMessageStream(
+      threadId: string,
+      content: string,
+      selection?: ChatModelSelection,
+    ): Stream.Stream<ChatStreamEvent, Error> {
+      async function* generate(): AsyncGenerator<ChatStreamEvent> {
+        const thread = await getThread(threadId);
+        const projectId = thread.projectId;
+        const threadScope = thread.scope as ChatScope;
+        const turnId = makeId("turn");
+        const startedAt = Date.now();
+        const session = providerService.startSession(threadId, selection?.provider);
+        if (!session) {
+          if (selection?.provider) {
+            logWarn("chat provider unavailable", { providerId: selection.provider });
+          }
+          logError("chat turn failed", {
+            turnId,
+            projectId,
+            reason: "no_provider_available",
+            requestedProviderId: selection?.provider,
+          });
+          throw new Error("No chat provider available");
         }
 
-        const { text: fullResponse } = await providerStream.result;
-        const cleanResponse = stripTopicMarkers(fullResponse);
+        const provider = providerService.pickAdapter(session.provider);
+        if (!provider) {
+          throw new Error("Provider session resolved to unavailable provider");
+        }
 
-        // Save assistant message
-        const assistantMsgId = makeId("cmsg");
-        await db.insert(chatMessages).values({
-          id: assistantMsgId,
+        const providerModels = await providerService.modelsForSession(threadId);
+        const model = resolveProviderModel(providerModels, selection);
+        const effort = resolveReasoningEffort(model, selection);
+
+        const project = await db.select().from(projects).where(eq(projects.id, projectId)).get();
+        if (!project) {
+          logError("chat turn failed", {
+            turnId,
+            projectId,
+            providerId: session.provider,
+            reason: "project_not_found",
+          });
+          throw new Error("Project not found");
+        }
+        const projectSlug = project.slug ?? project.id;
+
+        logInfo("chat turn start", {
+          turnId,
           projectId,
-          role: "assistant",
-          content: cleanResponse,
+          projectSlug,
+          providerId: session.provider,
+          model: model.slug,
+          effort,
+        });
+
+        const userMsgId = makeId("cmsg");
+        await db.insert(chatMessages).values({
+          id: userMsgId,
+          projectId,
+          threadId,
+          role: "user",
+          content,
           createdAt: now(),
         });
 
-        // Parse and save topic updates
-        const parsed = parseTopicUpdates(fullResponse);
-        const updatedTopicMetas: TopicFileMeta[] = [];
+        const [resumeText, profile, topics] = await Promise.all([
+          getResumeText(projectId),
+          getProfile(projectId),
+          getTopicsWithContent(projectId),
+        ]);
 
-        // Build a slug→row lookup for existing topics
-        const existingBySlug = new Map(topics.map((t) => [t.slug, t]));
+        const systemPrompt = buildSystemPrompt({ resumeText, profile, topics });
 
-        for (const update of parsed) {
-          const ts = now();
+        const history = await db
+          .select()
+          .from(chatMessages)
+          .where(eq(chatMessages.threadId, threadId))
+          .orderBy(asc(chatMessages.createdAt))
+          .all();
 
-          if (update.kind === "create" || !existingBySlug.has(update.slug)) {
-            // Create new topic
-            const topicId = makeId("topic");
-            const fp = topicPath(projectSlug, update.slug);
+        const recentHistory = history.slice(-30).map((msg) => ({
+          role: msg.role,
+          content: msg.content,
+        }));
 
-            await writeTopicFile(projectSlug, update.slug, update.content);
-            await db.insert(topicFiles).values({
-              id: topicId,
-              projectId,
-              slug: update.slug,
-              title: update.title,
-              status: update.status,
-              filePath: fp,
-              createdAt: ts,
-              updatedAt: ts,
-            });
+        try {
+          const startedTurn = providerService.respond({
+            threadId,
+            provider: session.provider,
+            prompt: systemPrompt,
+            history: recentHistory,
+            selection,
+            runtime: {
+              cwd: ensureScopeDir(projectSlug, threadScope),
+              codexHome: ensureCodexHomeDir(projectSlug, threadScope, threadId),
+            },
+          });
+          if (!startedTurn) {
+            throw new Error("Failed to start provider turn");
+          }
 
-            updatedTopicMetas.push({
-              id: topicId,
-              projectId: projectId,
-              slug: update.slug,
-              title: update.title,
-              status: update.status,
-              createdAt: ts,
-              updatedAt: ts,
-            });
+          const providerStream = startedTurn.stream;
 
-            logInfo("chat topic created", {
-              turnId,
-              projectId,
-              topicId,
-              slug: update.slug,
-              status: update.status,
-            });
+          for await (const chunk of providerStream) {
+            const event = { type: "delta" as const, chunk };
+            await emitThreadEvent(projectId, threadId, event);
+            yield event;
+          }
 
-            // Yield live topic update so frontend can show it immediately
-            yield {
-              type: "topicUpdate" as const,
-              topicId,
-              slug: update.slug,
-              title: update.title,
-              status: update.status,
-              content: update.content,
-            };
-          } else {
-            // Update existing topic
-            const existing = existingBySlug.get(update.slug)!;
+          const { text: fullResponse } = await providerStream.result;
+          const cleanResponse = stripTopicMarkers(fullResponse);
 
-            await writeTopicFile(projectSlug, update.slug, update.content);
-            await db
-              .update(topicFiles)
-              .set({
+          const assistantMsgId = makeId("cmsg");
+          await db.insert(chatMessages).values({
+            id: assistantMsgId,
+            projectId,
+            threadId,
+            role: "assistant",
+            content: cleanResponse,
+            createdAt: now(),
+          });
+
+          const parsed = threadScope === "coach" ? parseTopicUpdates(fullResponse) : [];
+          const updatedTopicMetas: TopicFileMeta[] = [];
+
+          const existingBySlug = new Map(topics.map((t) => [t.slug, t]));
+
+          for (const update of parsed) {
+            const ts = now();
+
+            if (update.kind === "create" || !existingBySlug.has(update.slug)) {
+              const topicId = makeId("topic");
+              const fp = topicPath(projectSlug, update.slug);
+
+              await writeTopicFile(projectSlug, update.slug, update.content);
+              await db.insert(topicFiles).values({
+                id: topicId,
+                projectId,
+                slug: update.slug,
+                title: update.title,
+                status: update.status,
+                filePath: fp,
+                createdAt: ts,
+                updatedAt: ts,
+              });
+
+              updatedTopicMetas.push({
+                id: topicId,
+                projectId: projectId,
+                slug: update.slug,
+                title: update.title,
+                status: update.status,
+                createdAt: ts,
+                updatedAt: ts,
+              });
+
+              logInfo("chat topic created", {
+                turnId,
+                projectId,
+                topicId,
+                slug: update.slug,
+                status: update.status,
+              });
+
+              const event = {
+                type: "topicUpdate" as const,
+                topicId,
+                slug: update.slug,
+                title: update.title,
+                status: update.status,
+                content: update.content,
+              };
+              await emitThreadEvent(projectId, threadId, event);
+              yield event;
+            } else {
+              const existing = existingBySlug.get(update.slug)!;
+
+              await writeTopicFile(projectSlug, update.slug, update.content);
+              await db
+                .update(topicFiles)
+                .set({
+                  title: update.title,
+                  status: update.status,
+                  filePath: topicPath(projectSlug, update.slug),
+                  updatedAt: ts,
+                })
+                .where(eq(topicFiles.id, existing.id));
+
+              updatedTopicMetas.push({
+                ...existing,
                 title: update.title,
                 status: update.status,
                 updatedAt: ts,
-              })
-              .where(eq(topicFiles.id, existing.id));
+              });
 
-            updatedTopicMetas.push({
-              ...existing,
-              title: update.title,
-              status: update.status,
-              updatedAt: ts,
-            });
+              logInfo("chat topic updated", {
+                turnId,
+                projectId,
+                topicId: existing.id,
+                slug: update.slug,
+                status: update.status,
+              });
 
-            logInfo("chat topic updated", {
-              turnId,
-              projectId,
-              topicId: existing.id,
-              slug: update.slug,
-              status: update.status,
-            });
-
-            yield {
-              type: "topicUpdate" as const,
-              topicId: existing.id,
-              slug: update.slug,
-              title: update.title,
-              status: update.status,
-              content: update.content,
-            };
+              const event = {
+                type: "topicUpdate" as const,
+                topicId: existing.id,
+                slug: update.slug,
+                title: update.title,
+                status: update.status,
+                content: update.content,
+              };
+              await emitThreadEvent(projectId, threadId, event);
+              yield event;
+            }
           }
+
+          logInfo("chat turn complete", {
+            turnId,
+            threadId,
+            projectId,
+            providerId: session.provider,
+            model: model.slug,
+            effort,
+            durationMs: Date.now() - startedAt,
+            userMessageId: userMsgId,
+            assistantMessageId: assistantMsgId,
+            responseChars: cleanResponse.length,
+            topicUpdates: updatedTopicMetas.length,
+          });
+
+          if (threadScope === "explorer") {
+            await touchRuntime(threadId, session.provider, {
+              projectId,
+              scope: threadScope,
+              model: model.slug,
+              effort,
+              providerId: session.provider,
+            });
+          }
+
+          const event = {
+            type: "complete" as const,
+            messageId: assistantMsgId,
+            content: cleanResponse,
+            topicUpdates: updatedTopicMetas,
+          };
+          await emitThreadEvent(projectId, threadId, event);
+          yield event;
+        } catch (error) {
+          logError("chat turn failed", {
+            turnId,
+            threadId,
+            projectId,
+            providerId: session.provider,
+            model: model.slug,
+            effort,
+            durationMs: Date.now() - startedAt,
+            userMessageId: userMsgId,
+            error,
+          });
+          throw error;
         }
-
-        logInfo("chat turn complete", {
-          turnId,
-          projectId,
-          providerId: provider.id,
-          model: model.slug,
-          effort,
-          durationMs: Date.now() - startedAt,
-          userMessageId: userMsgId,
-          assistantMessageId: assistantMsgId,
-          responseChars: cleanResponse.length,
-          topicUpdates: updatedTopicMetas.length,
-        });
-
-        // Yield completion event
-        yield {
-          type: "complete" as const,
-          messageId: assistantMsgId,
-          content: cleanResponse,
-          topicUpdates: updatedTopicMetas,
-        };
-      } catch (error) {
-        logError("chat turn failed", {
-          turnId,
-          projectId,
-          providerId: provider.id,
-          model: model.slug,
-          effort,
-          durationMs: Date.now() - startedAt,
-          userMessageId: userMsgId,
-          error,
-        });
-        throw error;
       }
+
+      return Stream.fromAsyncIterable(generate(), (err) =>
+        err instanceof Error ? err : new Error(String(err)),
+      );
     }
 
-    return Stream.fromAsyncIterable(generate(), (err) =>
-      err instanceof Error ? err : new Error(String(err)),
-    );
-  },
+    return {
+      listProviders: () =>
+        Effect.promise(async (): Promise<ChatProviderInfo[]> => {
+          const providersFromRegistry = providerService.listProviders();
+          const providers = await Promise.all(
+            providersFromRegistry.map(async (provider) => ({
+              id: provider.provider,
+              available: provider.available(),
+              models: await provider.models().catch(() => []),
+            })),
+          );
 
-  dismissInsight: (_projectId: string, cardId: string) =>
-    Effect.promise(async () => {
-      await db
-        .update(insightCards)
-        .set({ status: "dismissed", updatedAt: now() })
-        .where(eq(insightCards.id, cardId));
-    }),
+          return providers;
+        }),
 
-  listTopics: (projectId: string) =>
-    Effect.promise(async (): Promise<TopicFileMeta[]> => {
-      const rows = await db
-        .select()
-        .from(topicFiles)
-        .where(eq(topicFiles.projectId, projectId))
-        .all();
+      listThreads: (projectId: string, scope: ChatScope) =>
+        Effect.promise(async (): Promise<ChatThread[]> => {
+          await ensureDefaultThread(projectId, scope);
+          const rows = await db
+            .select()
+            .from(chatThreads)
+            .where(and(eq(chatThreads.projectId, projectId), eq(chatThreads.scope, scope)))
+            .orderBy(asc(chatThreads.createdAt))
+            .all();
+          return rows.map(toThread);
+        }),
 
-      return rows.map(toTopicMeta);
-    }),
+      createThread: (projectId: string, scope: ChatScope, title?: string) =>
+        Effect.promise(async (): Promise<ChatThread> => {
+          const project = await db.select().from(projects).where(eq(projects.id, projectId)).get();
+          if (!project) {
+            throw new Error("Project not found");
+          }
 
-  getTopic: (projectId: string, topicId: string) =>
-    Effect.promise(async (): Promise<TopicFile> => {
-      const row = await db.select().from(topicFiles).where(eq(topicFiles.id, topicId)).get();
+          const ts = now();
+          const id = makeId("thread");
+          const row: ChatThread = {
+            id,
+            projectId,
+            scope,
+            title:
+              title?.trim() || `${scope === "coach" ? "Coach" : "Explorer"} ${ts.slice(11, 16)}`,
+            status: "active",
+            createdAt: ts,
+            updatedAt: ts,
+          };
+          await db.insert(chatThreads).values(row);
+          return row;
+        }),
 
-      if (!row) throw new Error(`Topic ${topicId} not found`);
+      getMessages: (threadId: string) =>
+        Effect.promise(async (): Promise<ChatMessage[]> => {
+          const thread = await getThread(threadId);
+          const rows = await db
+            .select()
+            .from(chatMessages)
+            .where(eq(chatMessages.threadId, threadId))
+            .orderBy(asc(chatMessages.createdAt))
+            .all();
 
-      const content = await readTopicFile(row.filePath);
+          return rows.map((r) => ({
+            id: r.id,
+            projectId: thread.projectId,
+            threadId,
+            role: r.role as ChatMessage["role"],
+            content: r.content,
+            createdAt: r.createdAt,
+          }));
+        }),
 
-      return {
-        ...toTopicMeta(row),
-        content,
-      };
-    }),
+      sendMessage: (threadId: string, content: string, selection?: ChatModelSelection) =>
+        buildSendMessageStream(threadId, content, selection),
 
-  updateTopic: (projectId: string, topicId: string, content: string) =>
-    Effect.promise(async (): Promise<TopicFile> => {
-      const row = await db.select().from(topicFiles).where(eq(topicFiles.id, topicId)).get();
+      dispatchCommand: (command: ChatDispatchCommand) =>
+        Effect.promise(async () => {
+          await recordThreadCommand(command);
+          if (command.type === "thread.turn.interrupt") {
+            const thread = await getThread(command.threadId);
+            await writeRuntimeEvent(thread.projectId, "thread.command.dispatched", {
+              threadId: command.threadId,
+              command: "thread.turn.interrupt",
+            });
+            providerService.interruptSession(command.threadId);
+            return { accepted: true };
+          }
 
-      if (!row) throw new Error(`Topic ${topicId} not found`);
+          const thread = await getThread(command.threadId);
+          await writeRuntimeEvent(thread.projectId, "thread.command.dispatched", {
+            threadId: command.threadId,
+            command: "thread.turn.start",
+            contentLength: command.content.length,
+            selection: command.selection ?? null,
+          });
+          Effect.runFork(
+            Stream.runDrain(
+              buildSendMessageStream(command.threadId, command.content, command.selection),
+            ),
+          );
+          return { accepted: true };
+        }),
 
-      const project = await db.select().from(projects).where(eq(projects.id, projectId)).get();
-      if (!project) throw new Error(`Project ${projectId} not found`);
+      subscribeThread: (threadId: string, afterSequence = 0) =>
+        Stream.merge(
+          Stream.unwrap(
+            Effect.promise(async () => {
+              const recorded = await listThreadEvents(threadId, afterSequence);
+              return Stream.fromIterable(recorded);
+            }),
+          ),
+          Stream.fromAsyncIterable(subscribeThreadEvents(threadId), (err) =>
+            err instanceof Error ? err : new Error(String(err)),
+          ),
+        ) as Stream.Stream<ThreadStreamEnvelope, Error>,
 
-      const ts = now();
-      await writeTopicFile(project.slug ?? project.id, row.slug, content);
-      await db.update(topicFiles).set({ updatedAt: ts }).where(eq(topicFiles.id, topicId));
+      getThreadProjection: (threadId: string) =>
+        Effect.promise(async (): Promise<ThreadProjectionSnapshot> => {
+          return getThreadProjection(threadId);
+        }),
 
-      return {
-        ...toTopicMeta({ ...row, updatedAt: ts }),
-        content,
-      };
-    }),
-});
+      interruptThread: (threadId: string) =>
+        Effect.sync(() => {
+          return providerService.interruptSession(threadId);
+        }),
+
+      streamRuntime: (threadId?: string) =>
+        Stream.fromAsyncIterable(providerService.streamEvents(threadId), (err) =>
+          err instanceof Error ? err : new Error(String(err)),
+        ),
+
+      dismissInsight: (_projectId: string, cardId: string) =>
+        Effect.promise(async () => {
+          await db
+            .update(insightCards)
+            .set({ status: "dismissed", updatedAt: now() })
+            .where(eq(insightCards.id, cardId));
+        }),
+
+      listTopics: (projectId: string) =>
+        Effect.promise(async (): Promise<TopicFileMeta[]> => {
+          const rows = await db
+            .select()
+            .from(topicFiles)
+            .where(eq(topicFiles.projectId, projectId))
+            .all();
+
+          return rows.map(toTopicMeta);
+        }),
+
+      getTopic: (projectId: string, topicId: string) =>
+        Effect.promise(async (): Promise<TopicFile> => {
+          const row = await db
+            .select()
+            .from(topicFiles)
+            .where(and(eq(topicFiles.id, topicId), eq(topicFiles.projectId, projectId)))
+            .get();
+
+          if (!row) throw new Error(`Topic ${topicId} not found`);
+
+          const content = await readTopicFile(row.filePath);
+
+          return {
+            ...toTopicMeta(row),
+            content,
+          };
+        }),
+
+      updateTopic: (projectId: string, topicId: string, content: string) =>
+        Effect.promise(async (): Promise<TopicFile> => {
+          const row = await db.select().from(topicFiles).where(eq(topicFiles.id, topicId)).get();
+
+          if (!row) throw new Error(`Topic ${topicId} not found`);
+
+          const project = await db.select().from(projects).where(eq(projects.id, projectId)).get();
+          if (!project) throw new Error(`Project ${projectId} not found`);
+
+          const ts = now();
+          await writeTopicFile(project.slug ?? project.id, row.slug, content);
+          await db
+            .update(topicFiles)
+            .set({
+              filePath: topicPath(project.slug ?? project.id, row.slug),
+              updatedAt: ts,
+            })
+            .where(eq(topicFiles.id, topicId));
+
+          return {
+            ...toTopicMeta({ ...row, updatedAt: ts }),
+            content,
+          };
+        }),
+    };
+  }),
+).pipe(Layer.provide(ProviderServiceLive));

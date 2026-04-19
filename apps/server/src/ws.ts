@@ -12,8 +12,26 @@ import { ChatService } from "./services/chat/service";
 import { ChatServiceLive } from "./services/chat/layer";
 
 function parseProviderId(provider?: string): ProviderId | undefined {
-  return provider === "codex" || provider === "claude" ? provider : undefined;
+  return provider === "codex" || provider === "claude" || provider === "opencode"
+    ? provider
+    : undefined;
 }
+
+type RpcDispatchCommand =
+  | {
+      type: "thread.turn.start";
+      threadId: string;
+      content: string;
+      selection?: {
+        provider?: string;
+        model?: string;
+        effort?: string;
+      };
+    }
+  | {
+      type: "thread.turn.interrupt";
+      threadId: string;
+    };
 
 // ---------------------------------------------------------------------------
 // RPC handlers — bridge ChatRpcGroup methods to ChatService
@@ -26,23 +44,94 @@ const ChatHandlers = ChatRpcGroup.toLayer(
     return {
       "chat.listProviders": () => chat.listProviders(),
 
-      "chat.getMessages": ({ projectId }: { projectId: string }) => chat.getMessages(projectId),
+      "chat.listThreads": ({
+        projectId,
+        scope,
+      }: {
+        projectId: string;
+        scope: "coach" | "explorer";
+      }) => chat.listThreads(projectId, scope),
+
+      "chat.createThread": ({
+        projectId,
+        scope,
+        title,
+      }: {
+        projectId: string;
+        scope: "coach" | "explorer";
+        title?: string;
+      }) => chat.createThread(projectId, scope, title),
+
+      "chat.getMessages": ({ threadId }: { threadId: string }) => chat.getMessages(threadId),
 
       "chat.sendMessage": ({
-        projectId,
+        threadId,
         content,
         provider,
         model,
         effort,
       }: {
-        projectId: string;
+        threadId: string;
         content: string;
         provider?: string;
         model?: string;
         effort?: string;
       }) =>
         chat
-          .sendMessage(projectId, content, { provider: parseProviderId(provider), model, effort })
+          .sendMessage(threadId, content, { provider: parseProviderId(provider), model, effort })
+          .pipe(Stream.mapError((err) => new ChatError({ message: err.message }))),
+
+      "chat.dispatchCommand": ({ command }: { command: RpcDispatchCommand }) => {
+        if (command?.type === "thread.turn.start") {
+          const provider = parseProviderId(command.selection?.provider);
+          if (command.selection?.provider && !provider) {
+            return Effect.fail(new ChatError({ message: "Unsupported provider" }));
+          }
+
+          return chat.dispatchCommand({
+            type: "thread.turn.start",
+            threadId: command.threadId,
+            content: command.content,
+            selection: command.selection
+              ? {
+                  ...(provider ? { provider } : {}),
+                  model: command.selection.model,
+                  effort: command.selection.effort,
+                }
+              : undefined,
+          });
+        }
+
+        if (command?.type === "thread.turn.interrupt") {
+          return chat.dispatchCommand({
+            type: "thread.turn.interrupt",
+            threadId: command.threadId,
+          });
+        }
+
+        return Effect.fail(new ChatError({ message: "Unsupported command" }));
+      },
+
+      "chat.subscribeThread": ({
+        threadId,
+        afterSequence,
+      }: {
+        threadId: string;
+        afterSequence?: number;
+      }) =>
+        chat
+          .subscribeThread(threadId, afterSequence)
+          .pipe(Stream.mapError((err) => new ChatError({ message: err.message }))),
+
+      "chat.getThreadProjection": ({ threadId }: { threadId: string }) =>
+        chat.getThreadProjection(threadId),
+
+      "chat.interruptThread": ({ threadId }: { threadId: string }) =>
+        chat.interruptThread(threadId),
+
+      "chat.streamRuntime": ({ threadId }: { threadId?: string }) =>
+        chat
+          .streamRuntime(threadId)
           .pipe(Stream.mapError((err) => new ChatError({ message: err.message }))),
 
       "chat.dismissInsight": ({ projectId, cardId }: { projectId: string; cardId: string }) =>

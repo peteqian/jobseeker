@@ -6,13 +6,21 @@ import { Socket } from "effect/unstable/socket";
 import {
   ChatRpcGroup,
   type ChatMessage,
+  type ChatScope,
+  type ChatThread,
   type ProviderModel,
   type ProviderId,
   type TopicFile,
   type TopicFileMeta,
 } from "@jobseeker/contracts";
 
-import type { ChatStreamEvent } from "./types";
+import type {
+  ChatStreamEvent,
+  ProviderRuntimeEvent,
+  ThreadDispatchCommand,
+  ThreadProjectionSnapshot,
+  ThreadStreamEnvelope,
+} from "./types";
 
 export type ChatProviderResponse = {
   id: ProviderId | string;
@@ -43,11 +51,33 @@ export async function listProviders() {
   ) as Promise<ChatProviderResponse[]>;
 }
 
-export async function getMessages(projectId: string): Promise<ChatMessage[]> {
+export async function listThreads(projectId: string, scope: ChatScope): Promise<ChatThread[]> {
   return run(
     Effect.gen(function* () {
       const client = yield* RpcClient.make(ChatRpcGroup);
-      return yield* client["chat.getMessages"]({ projectId });
+      return yield* client["chat.listThreads"]({ projectId, scope });
+    }).pipe(Effect.scoped),
+  ) as Promise<ChatThread[]>;
+}
+
+export async function createThread(
+  projectId: string,
+  scope: ChatScope,
+  title?: string,
+): Promise<ChatThread> {
+  return run(
+    Effect.gen(function* () {
+      const client = yield* RpcClient.make(ChatRpcGroup);
+      return yield* client["chat.createThread"]({ projectId, scope, ...(title ? { title } : {}) });
+    }).pipe(Effect.scoped),
+  ) as Promise<ChatThread>;
+}
+
+export async function getMessages(threadId: string): Promise<ChatMessage[]> {
+  return run(
+    Effect.gen(function* () {
+      const client = yield* RpcClient.make(ChatRpcGroup);
+      return yield* client["chat.getMessages"]({ threadId });
     }).pipe(Effect.scoped),
   ) as Promise<ChatMessage[]>;
 }
@@ -92,8 +122,71 @@ export async function updateTopic(
   ) as Promise<TopicFile>;
 }
 
+export async function interruptThread(threadId: string): Promise<boolean> {
+  return run(
+    Effect.gen(function* () {
+      const client = yield* RpcClient.make(ChatRpcGroup);
+      return yield* client["chat.interruptThread"]({ threadId });
+    }).pipe(Effect.scoped),
+  ) as Promise<boolean>;
+}
+
+export function streamRuntime(
+  threadId?: string,
+  onEvent?: (event: ProviderRuntimeEvent) => void,
+): Promise<void> {
+  return run(
+    Effect.gen(function* () {
+      const client = yield* RpcClient.make(ChatRpcGroup);
+      const stream = client["chat.streamRuntime"]({ ...(threadId ? { threadId } : {}) });
+      yield* Stream.runForEach(stream, (event) =>
+        Effect.sync(() => onEvent?.(event as ProviderRuntimeEvent)),
+      );
+    }).pipe(Effect.scoped),
+  );
+}
+
+export async function dispatchCommand(
+  command: ThreadDispatchCommand,
+): Promise<{ accepted: boolean }> {
+  return run(
+    Effect.gen(function* () {
+      const client = yield* RpcClient.make(ChatRpcGroup);
+      return yield* client["chat.dispatchCommand"]({ command });
+    }).pipe(Effect.scoped),
+  ) as Promise<{ accepted: boolean }>;
+}
+
+export function subscribeThread(
+  threadId: string,
+  onEvent?: (event: ThreadStreamEnvelope) => void,
+  afterSequence?: number,
+): Promise<void> {
+  return run(
+    Effect.gen(function* () {
+      const client = yield* RpcClient.make(ChatRpcGroup);
+      const stream = client["chat.subscribeThread"]({
+        threadId,
+        ...(typeof afterSequence === "number" ? { afterSequence } : {}),
+      });
+      yield* Stream.runForEach(stream, (event) =>
+        Effect.sync(() => onEvent?.(event as ThreadStreamEnvelope)),
+      );
+    }).pipe(Effect.scoped),
+  );
+}
+
+export async function getThreadProjection(threadId: string): Promise<ThreadProjectionSnapshot> {
+  return run(
+    Effect.gen(function* () {
+      const client = yield* RpcClient.make(ChatRpcGroup);
+      return yield* client["chat.getThreadProjection"]({ threadId });
+    }).pipe(Effect.scoped),
+  ) as Promise<ThreadProjectionSnapshot>;
+}
+
 export function sendMessage(
-  projectId: string,
+  threadId: string,
   content: string,
   selection?: {
     provider?: string;
@@ -106,7 +199,7 @@ export function sendMessage(
     Effect.gen(function* () {
       const client = yield* RpcClient.make(ChatRpcGroup);
       const stream = client["chat.sendMessage"]({
-        projectId,
+        threadId,
         content,
         ...(selection?.provider ? { provider: selection.provider } : {}),
         ...(selection?.model ? { model: selection.model } : {}),

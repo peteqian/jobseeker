@@ -126,14 +126,69 @@ export const profiles = sqliteTable("profiles", {
   updatedAt: text("updated_at").notNull(),
 });
 
+export const chatThreads = sqliteTable("chat_threads", {
+  id: text("id").primaryKey(),
+  projectId: text("project_id")
+    .notNull()
+    .references(() => projects.id, { onDelete: "cascade" }),
+  scope: text("scope").notNull(),
+  title: text("title").notNull(),
+  status: text("status").notNull(),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
 export const chatMessages = sqliteTable("chat_messages", {
   id: text("id").primaryKey(),
   projectId: text("project_id")
     .notNull()
     .references(() => projects.id, { onDelete: "cascade" }),
+  threadId: text("thread_id").references(() => chatThreads.id, { onDelete: "cascade" }),
   role: text("role").notNull(),
   content: text("content").notNull(),
   createdAt: text("created_at").notNull(),
+});
+
+export const providerSessionRuntime = sqliteTable("provider_session_runtime", {
+  threadId: text("thread_id")
+    .primaryKey()
+    .references(() => chatThreads.id, { onDelete: "cascade" }),
+  providerName: text("provider_name").notNull(),
+  adapterKey: text("adapter_key").notNull(),
+  status: text("status").notNull(),
+  lastSeenAt: text("last_seen_at").notNull(),
+  resumeCursorJson: text("resume_cursor_json"),
+  runtimePayloadJson: text("runtime_payload_json"),
+});
+
+export const threadCommands = sqliteTable("thread_commands", {
+  id: text("id").primaryKey(),
+  threadId: text("thread_id")
+    .notNull()
+    .references(() => chatThreads.id, { onDelete: "cascade" }),
+  commandType: text("command_type").notNull(),
+  commandJson: text("command_json").notNull(),
+  createdAt: text("created_at").notNull(),
+});
+
+export const threadEvents = sqliteTable("thread_events", {
+  id: text("id").primaryKey(),
+  threadId: text("thread_id")
+    .notNull()
+    .references(() => chatThreads.id, { onDelete: "cascade" }),
+  sequence: integer("sequence").notNull(),
+  eventType: text("event_type").notNull(),
+  eventJson: text("event_json").notNull(),
+  createdAt: text("created_at").notNull(),
+});
+
+export const threadProjections = sqliteTable("thread_projections", {
+  threadId: text("thread_id")
+    .primaryKey()
+    .references(() => chatThreads.id, { onDelete: "cascade" }),
+  latestSequence: integer("latest_sequence").notNull(),
+  stateJson: text("state_json").notNull(),
+  updatedAt: text("updated_at").notNull(),
 });
 
 export const topicFiles = sqliteTable("topic_files", {
