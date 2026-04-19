@@ -48,7 +48,7 @@ import {
   appendThreadEvent,
   getThreadProjection,
   listThreadEvents,
-  recordThreadCommand,
+  tryRecordThreadCommand,
 } from "./projectionStore";
 
 const now = () => new Date().toISOString();
@@ -695,10 +695,18 @@ export const ChatServiceLive = Layer.effect(
 
       dispatchCommand: (command: ChatDispatchCommand) =>
         Effect.promise(async () => {
-          await recordThreadCommand(command);
+          const isNewCommand = await tryRecordThreadCommand(command);
+          if (!isNewCommand) {
+            return { accepted: true };
+          }
+
           if (command.type === "thread.turn.interrupt") {
             const thread = await getThread(command.threadId);
             await writeRuntimeEvent(thread.projectId, "thread.command.dispatched", {
+              commandId: command.commandId,
+              createdAt: command.createdAt,
+              actor: command.actor,
+              sessionId: command.sessionId,
               threadId: command.threadId,
               command: "thread.turn.interrupt",
             });
@@ -708,6 +716,10 @@ export const ChatServiceLive = Layer.effect(
 
           const thread = await getThread(command.threadId);
           await writeRuntimeEvent(thread.projectId, "thread.command.dispatched", {
+            commandId: command.commandId,
+            createdAt: command.createdAt,
+            actor: command.actor,
+            sessionId: command.sessionId,
             threadId: command.threadId,
             command: "thread.turn.start",
             contentLength: command.content.length,

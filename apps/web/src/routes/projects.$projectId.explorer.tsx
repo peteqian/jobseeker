@@ -186,6 +186,7 @@ function ExplorerPage() {
     streamingContent: debugStreamingContent,
     isStreaming: debugIsStreaming,
     send: sendDebugMessage,
+    interrupt: interruptDebugMessage,
   } = useChat({
     projectId,
     threadId: activeThreadId ?? "",
@@ -337,6 +338,7 @@ function ExplorerPage() {
             debugStreamingContent={debugStreamingContent}
             debugIsStreaming={debugIsStreaming}
             onSendDebugMessage={sendDebugMessage}
+            onInterruptDebugMessage={interruptDebugMessage}
           />
         </TabsContent>
 
@@ -460,6 +462,7 @@ function ManageTab({
   debugStreamingContent,
   debugIsStreaming,
   onSendDebugMessage,
+  onInterruptDebugMessage,
 }: {
   sessions: ChatThread[];
   activeThreadId: string | null;
@@ -474,6 +477,7 @@ function ManageTab({
   debugStreamingContent: string;
   debugIsStreaming: boolean;
   onSendDebugMessage: (content: string) => void;
+  onInterruptDebugMessage: () => void;
 }) {
   const streamItems = useMemo(
     () => buildSessionStreamItems(debugMessages, logs, debugStreamingContent),
@@ -560,6 +564,7 @@ function ManageTab({
 
         <ChatInput
           onSend={onSendDebugMessage}
+          onInterrupt={onInterruptDebugMessage}
           disabled={debugIsStreaming}
           providers={debugProviders}
           selection={debugSelection}

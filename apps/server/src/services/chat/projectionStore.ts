@@ -153,13 +153,46 @@ function parseProjectionState(
 }
 
 export async function recordThreadCommand(command: ChatDispatchCommand): Promise<void> {
+  const ts = command.createdAt || nowIso();
   await db.insert(threadCommands).values({
     id: makeId("cmd"),
+    commandId: command.commandId,
     threadId: command.threadId,
     commandType: command.type,
+    actor: command.actor,
+    sessionId: command.sessionId,
+    commandCreatedAt: ts,
     commandJson: JSON.stringify(command),
-    createdAt: nowIso(),
+    createdAt: ts,
   });
+}
+
+function isDuplicateCommandIdError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  return error.message.includes("thread_commands.command_id");
+}
+
+export async function tryRecordThreadCommand(command: ChatDispatchCommand): Promise<boolean> {
+  const existing = await db
+    .select({ id: threadCommands.id })
+    .from(threadCommands)
+    .where(eq(threadCommands.commandId, command.commandId))
+    .get();
+  if (existing) {
+    return false;
+  }
+
+  try {
+    await recordThreadCommand(command);
+    return true;
+  } catch (error) {
+    if (isDuplicateCommandIdError(error)) {
+      return false;
+    }
+    throw error;
+  }
 }
 
 export async function appendThreadEvent(

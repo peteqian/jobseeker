@@ -5,7 +5,12 @@ import { dispatchCommand as rpcDispatchCommand } from "@/rpc/chat-client";
 import { getMessages as rpcGetMessages } from "@/rpc/chat-client";
 import { getThreadProjection as rpcGetThreadProjection } from "@/rpc/chat-client";
 import { subscribeThread as rpcSubscribeThread } from "@/rpc/chat-client";
-import type { ChatStreamTopicUpdate, ThreadStreamEnvelope, ThreadStreamEvent } from "@/rpc/types";
+import type {
+  ChatStreamTopicUpdate,
+  ThreadDispatchCommand,
+  ThreadStreamEnvelope,
+  ThreadStreamEvent,
+} from "@/rpc/types";
 
 interface UseChatOptions {
   projectId: string;
@@ -29,6 +34,20 @@ interface UseChatReturn {
   interrupt: () => void;
 }
 
+function makeCommandId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `cmd_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function makeSessionId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return `web_${crypto.randomUUID()}`;
+  }
+  return `web_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
 export function useChat(options: UseChatOptions): UseChatReturn {
   const { projectId, threadId, selection, onTopicUpdate, onTopicUpdates, onComplete } = options;
 
@@ -37,6 +56,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
   const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const lastSequenceRef = useRef(0);
+  const sessionIdRef = useRef(makeSessionId());
 
   useEffect(() => {
     let cancelled = false;
@@ -203,12 +223,18 @@ export function useChat(options: UseChatOptions): UseChatReturn {
       setMessages((prev) => [...prev, userMsg]);
       setStreamingContent("");
 
-      void rpcDispatchCommand({
+      const command: ThreadDispatchCommand = {
+        commandId: makeCommandId(),
+        createdAt: new Date().toISOString(),
+        actor: "user",
+        sessionId: sessionIdRef.current,
         type: "thread.turn.start",
         threadId,
         content: trimmed,
         selection,
-      }).catch((err) => {
+      };
+
+      void rpcDispatchCommand(command).catch((err) => {
         const msg = err instanceof Error ? err.message : "Failed to send message";
         setError(msg);
         setIsStreaming(false);
@@ -223,7 +249,16 @@ export function useChat(options: UseChatOptions): UseChatReturn {
     }
 
     setError(null);
-    void rpcDispatchCommand({ type: "thread.turn.interrupt", threadId }).catch((err) => {
+    const command: ThreadDispatchCommand = {
+      commandId: makeCommandId(),
+      createdAt: new Date().toISOString(),
+      actor: "user",
+      sessionId: sessionIdRef.current,
+      type: "thread.turn.interrupt",
+      threadId,
+    };
+
+    void rpcDispatchCommand(command).catch((err) => {
       const msg = err instanceof Error ? err.message : "Failed to interrupt message";
       setError(msg);
     });

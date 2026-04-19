@@ -36,17 +36,26 @@ export interface ChatStreamComplete {
 
 export type ChatStreamEvent = ChatStreamDelta | ChatStreamTopicUpdate | ChatStreamComplete;
 
-export type ChatDispatchCommand =
-  | {
-      type: "thread.turn.start";
-      threadId: string;
-      content: string;
-      selection?: ChatModelSelection;
-    }
-  | {
-      type: "thread.turn.interrupt";
-      threadId: string;
-    };
+export type ChatDispatchCommand = ThreadTurnStartCommand | ThreadTurnInterruptCommand;
+
+export interface ThreadCommandMeta {
+  commandId: string;
+  createdAt: string;
+  actor: string;
+  sessionId: string;
+}
+
+export interface ThreadTurnStartCommand extends ThreadCommandMeta {
+  type: "thread.turn.start";
+  threadId: string;
+  content: string;
+  selection?: ChatModelSelection;
+}
+
+export interface ThreadTurnInterruptCommand extends ThreadCommandMeta {
+  type: "thread.turn.interrupt";
+  threadId: string;
+}
 
 export type ThreadStreamEvent = ChatStreamEvent | ProviderServiceEvent;
 

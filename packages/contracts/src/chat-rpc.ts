@@ -164,7 +164,15 @@ export const ChatModelSelectionSchema = Schema.Struct({
   effort: Schema.optionalKey(Schema.String),
 });
 
+export const ThreadCommandMetaSchema = Schema.Struct({
+  commandId: Schema.String,
+  createdAt: Schema.String,
+  actor: Schema.String,
+  sessionId: Schema.String,
+});
+
 export const ThreadTurnStartCommandSchema = Schema.Struct({
+  ...ThreadCommandMetaSchema.fields,
   type: Schema.Literal("thread.turn.start"),
   threadId: Schema.String,
   content: Schema.String,
@@ -172,6 +180,7 @@ export const ThreadTurnStartCommandSchema = Schema.Struct({
 });
 
 export const ThreadTurnInterruptCommandSchema = Schema.Struct({
+  ...ThreadCommandMetaSchema.fields,
   type: Schema.Literal("thread.turn.interrupt"),
   threadId: Schema.String,
 });

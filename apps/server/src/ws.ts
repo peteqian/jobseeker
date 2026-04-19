@@ -17,21 +17,30 @@ function parseProviderId(provider?: string): ProviderId | undefined {
     : undefined;
 }
 
-type RpcDispatchCommand =
-  | {
-      type: "thread.turn.start";
-      threadId: string;
-      content: string;
-      selection?: {
-        provider?: string;
-        model?: string;
-        effort?: string;
-      };
-    }
-  | {
-      type: "thread.turn.interrupt";
-      threadId: string;
-    };
+type RpcDispatchCommand = RpcThreadTurnStartCommand | RpcThreadTurnInterruptCommand;
+
+interface RpcThreadCommandMeta {
+  commandId: string;
+  createdAt: string;
+  actor: string;
+  sessionId: string;
+}
+
+interface RpcThreadTurnStartCommand extends RpcThreadCommandMeta {
+  type: "thread.turn.start";
+  threadId: string;
+  content: string;
+  selection?: {
+    provider?: string;
+    model?: string;
+    effort?: string;
+  };
+}
+
+interface RpcThreadTurnInterruptCommand extends RpcThreadCommandMeta {
+  type: "thread.turn.interrupt";
+  threadId: string;
+}
 
 // ---------------------------------------------------------------------------
 // RPC handlers — bridge ChatRpcGroup methods to ChatService
@@ -89,6 +98,10 @@ const ChatHandlers = ChatRpcGroup.toLayer(
           }
 
           return chat.dispatchCommand({
+            commandId: command.commandId,
+            createdAt: command.createdAt,
+            actor: command.actor,
+            sessionId: command.sessionId,
             type: "thread.turn.start",
             threadId: command.threadId,
             content: command.content,
@@ -104,6 +117,10 @@ const ChatHandlers = ChatRpcGroup.toLayer(
 
         if (command?.type === "thread.turn.interrupt") {
           return chat.dispatchCommand({
+            commandId: command.commandId,
+            createdAt: command.createdAt,
+            actor: command.actor,
+            sessionId: command.sessionId,
             type: "thread.turn.interrupt",
             threadId: command.threadId,
           });

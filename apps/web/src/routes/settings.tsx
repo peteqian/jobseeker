@@ -111,6 +111,21 @@ function joinCsv(value: string[]): string {
   return value.join(", ");
 }
 
+function isProviderDirty(
+  providerSettings: ProviderSettings | null,
+  savedProviderSettings: ProviderSettings | null,
+  providerId: ProviderId,
+): boolean {
+  if (!providerSettings || !savedProviderSettings) {
+    return false;
+  }
+
+  return (
+    JSON.stringify(providerSettings[providerId]) !==
+    JSON.stringify(savedProviderSettings[providerId])
+  );
+}
+
 function SettingsPage() {
   useShellHeader(SETTINGS_HEADER);
   const queryClient = useQueryClient();
@@ -174,15 +189,9 @@ function SettingsPage() {
   const claudeConnection = connections.find((connection) => connection.id === "claude") ?? null;
   const opencodeConnection = connections.find((connection) => connection.id === "opencode") ?? null;
 
-  const codexDirty =
-    Boolean(providerSettings && savedProviderSettings) &&
-    JSON.stringify(providerSettings.codex) !== JSON.stringify(savedProviderSettings.codex);
-  const claudeDirty =
-    Boolean(providerSettings && savedProviderSettings) &&
-    JSON.stringify(providerSettings.claude) !== JSON.stringify(savedProviderSettings.claude);
-  const opencodeDirty =
-    Boolean(providerSettings && savedProviderSettings) &&
-    JSON.stringify(providerSettings.opencode) !== JSON.stringify(savedProviderSettings.opencode);
+  const codexDirty = isProviderDirty(providerSettings, savedProviderSettings, "codex");
+  const claudeDirty = isProviderDirty(providerSettings, savedProviderSettings, "claude");
+  const opencodeDirty = isProviderDirty(providerSettings, savedProviderSettings, "opencode");
 
   useEffect(() => {
     void refresh();

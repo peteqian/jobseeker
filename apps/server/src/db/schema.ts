@@ -1,4 +1,12 @@
-import { integer, primaryKey, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import {
+  index,
+  integer,
+  primaryKey,
+  real,
+  sqliteTable,
+  text,
+  uniqueIndex,
+} from "drizzle-orm/sqlite-core";
 
 export const projects = sqliteTable("projects", {
   id: text("id").primaryKey(),
@@ -161,15 +169,27 @@ export const providerSessionRuntime = sqliteTable("provider_session_runtime", {
   runtimePayloadJson: text("runtime_payload_json"),
 });
 
-export const threadCommands = sqliteTable("thread_commands", {
-  id: text("id").primaryKey(),
-  threadId: text("thread_id")
-    .notNull()
-    .references(() => chatThreads.id, { onDelete: "cascade" }),
-  commandType: text("command_type").notNull(),
-  commandJson: text("command_json").notNull(),
-  createdAt: text("created_at").notNull(),
-});
+export const threadCommands = sqliteTable(
+  "thread_commands",
+  {
+    id: text("id").primaryKey(),
+    commandId: text("command_id").notNull(),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => chatThreads.id, { onDelete: "cascade" }),
+    commandType: text("command_type").notNull(),
+    actor: text("actor").notNull(),
+    sessionId: text("session_id").notNull(),
+    commandCreatedAt: text("command_created_at").notNull(),
+    commandJson: text("command_json").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("uq_thread_commands_command_id").on(table.commandId),
+    index("idx_thread_commands_thread_created").on(table.threadId, table.createdAt),
+    index("idx_thread_commands_thread_command_created").on(table.threadId, table.commandCreatedAt),
+  ],
+);
 
 export const threadEvents = sqliteTable("thread_events", {
   id: text("id").primaryKey(),
