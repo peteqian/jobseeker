@@ -1,23 +1,9 @@
 import { and, desc, eq, ne, sql } from "drizzle-orm";
+import type { DistilledTrajectory, Extractor, TrajectoryStep } from "@jobseeker/browser-agent";
 
 import { db } from "../../db";
 import { pageMemory } from "../../db/schema";
 import { makeId } from "../../lib/ids";
-
-export interface TrajectoryStep {
-  name: string;
-  paramsTemplate: Record<string, unknown>;
-}
-
-export interface Extractor {
-  listingSelector: string;
-  fields: Record<string, { selector: string; attr?: string }>;
-}
-
-export interface DistilledTrajectory {
-  actions: TrajectoryStep[];
-  extractor: Extractor;
-}
 
 export type PageMemoryStatus = "untrusted" | "trusted" | "broken";
 

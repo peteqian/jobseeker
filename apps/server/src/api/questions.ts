@@ -17,7 +17,8 @@ import {
 } from "../services/questions";
 import { db } from "../db";
 import { profiles, questionAnswers, questionCards, questions } from "../db/schema";
-import { readProjectSnapshot, writeProfileFile } from "./projects";
+import { writeProfileFile } from "../services/projects/profile";
+import { readProjectSnapshot } from "../services/projects/snapshot";
 
 const now = () => new Date().toISOString();
 

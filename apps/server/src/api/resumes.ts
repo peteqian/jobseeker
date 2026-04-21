@@ -3,9 +3,9 @@ import { desc, eq } from "drizzle-orm";
 
 import { makeId } from "../lib/ids";
 import { extractResumeText, getExtractedName } from "../services/resume";
+import { readProjectSnapshot } from "../services/projects/snapshot";
 import { db } from "../db";
 import { documents, projects } from "../db/schema";
-import { readProjectSnapshot } from "./projects";
 
 const now = () => new Date().toISOString();
 

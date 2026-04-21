@@ -1,7 +1,7 @@
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 
-import type { Decision, DecisionInput } from "./loop";
+import type { Decision, DecisionInput } from "./contracts";
 import { SYSTEM_PROMPT } from "./prompts";
 
 interface CodexCliOptions {

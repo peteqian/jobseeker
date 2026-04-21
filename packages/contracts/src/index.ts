@@ -4,6 +4,7 @@ export * from "./core";
 export * from "./model";
 export * from "./project";
 export * from "./profile";
+export * from "./explorer-projections";
 export * from "./provider";
 export * from "./questions";
 export * from "./topic";

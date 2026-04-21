@@ -48,6 +48,7 @@ export class CDPClient {
   private closeHandlers = new Set<(reason?: string) => void>();
   private ready: Promise<void>;
   private closed = false;
+  private expectedClose = false;
 
   constructor(wsUrl: string) {
     this.ws = new WebSocket(wsUrl);
@@ -56,10 +57,13 @@ export class CDPClient {
       this.ws.once("error", (error) => reject(error));
     });
     this.ws.on("message", (data) => this.handleMessage(data.toString()));
-    this.ws.on("close", (_code, reason) => {
+    this.ws.on("close", (code, reason) => {
       this.closed = true;
       const reasonText = typeof reason === "string" ? reason : reason.toString();
-      this.rejectPending(new Error(`CDP websocket closed: ${reasonText}`));
+      const detail = reasonText.length > 0 ? `code=${code} reason=${reasonText}` : `code=${code}`;
+      if (!this.expectedClose) {
+        this.rejectPending(new Error(`CDP websocket closed (${detail})`));
+      }
       for (const handler of this.closeHandlers) {
         handler(reasonText);
       }
@@ -159,6 +163,7 @@ export class CDPClient {
 
   close() {
     if (this.closed) return;
+    this.expectedClose = true;
     this.closed = true;
     this.ws.close();
   }

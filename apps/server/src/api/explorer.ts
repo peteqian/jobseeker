@@ -1,9 +1,10 @@
 import { Hono } from "hono";
 import { eq } from "drizzle-orm";
-import type { ExplorerConfigRecord, UpdateExplorerConfigInput } from "@jobseeker/contracts";
+import type { UpdateExplorerConfigInput } from "@jobseeker/contracts";
 
 import { db } from "../db";
 import { explorerConfigs } from "../db/schema";
+import { mapExplorerConfigRow } from "../services/projects/explorerConfig";
 
 const now = () => new Date().toISOString();
 
@@ -21,12 +22,7 @@ export function registerExplorerRoutes(app: Hono) {
     }
 
     return c.json({
-      explorer: {
-        projectId: config.projectId,
-        domains: JSON.parse(config.domainsJson) as ExplorerConfigRecord["domains"],
-        includeAgentSuggestions: config.includeAgentSuggestions,
-        updatedAt: config.updatedAt,
-      },
+      explorer: mapExplorerConfigRow(config),
     });
   });
 

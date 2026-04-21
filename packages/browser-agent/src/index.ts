@@ -26,7 +26,7 @@ export type {
   RawAction,
   StepInfo,
   TrajectoryStep,
-} from "./agent/loop";
+} from "./agent/contracts";
 export { SYSTEM_PROMPT } from "./agent/prompts";
 
 export { createServer as createMcpServer, runStdioServer } from "./mcp/server";

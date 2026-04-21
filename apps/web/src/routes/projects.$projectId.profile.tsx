@@ -12,8 +12,8 @@ import { projectRouteId } from "@/lib/project-route";
 import { useJobseeker } from "@/providers/jobseeker-hooks";
 import { useShellHeaderActions, useShellHeaderMeta } from "@/providers/shell-header-context";
 import { useProject } from "@/providers/project-context";
-import { ProfileEditor, type ProfileEditorHandle } from "./projects.$projectId.profile/editor";
-import { ProfileModelSettings } from "./projects.$projectId.profile/model-settings";
+import { ProfileEditor, type ProfileEditorHandle } from "./projects.$projectId.profile/-editor";
+import { ProfileModelSettings } from "./projects.$projectId.profile/-model-settings";
 
 export const Route = createFileRoute("/projects/$projectId/profile")({
   component: ProfilePage,
