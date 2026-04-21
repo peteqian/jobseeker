@@ -27,13 +27,6 @@ export interface ExplorerConfigRecord {
   updatedAt: string;
 }
 
-export interface DomainMemory {
-  domain: string;
-  searchHints: string[];
-  extractHints: string[];
-  avoidHints: string[];
-}
-
 export interface ProjectRecord {
   id: string;
   slug: string;

@@ -1513,6 +1513,22 @@ function toExplorerFeed(events: RuntimeEvent[], taskId: string | null): Explorer
         label: `Finished ${domain}`,
         detail: `${progressText} · ${query} · ${jobsFound ?? 0} jobs`,
       });
+      continue;
+    }
+
+    if (phase === "job_found") {
+      const job = (payload.job ?? {}) as Record<string, unknown>;
+      const title = typeof job.title === "string" ? job.title : "Untitled";
+      const company = typeof job.company === "string" ? job.company : "Unknown company";
+      const score = typeof payload.score === "number" ? payload.score : null;
+      const scoreText = score !== null ? ` · score ${Math.round(score * 100)}` : "";
+      filtered.push({
+        id: event.id,
+        createdAt: event.createdAt,
+        tone: "success",
+        label: `Saved ${title}`,
+        detail: `${company} · ${domain}${scoreText}`,
+      });
     }
   }
 

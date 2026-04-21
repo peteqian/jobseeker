@@ -1,9 +1,22 @@
 CREATE TABLE `chat_messages` (
 	`id` text PRIMARY KEY NOT NULL,
 	`project_id` text NOT NULL,
+	`thread_id` text,
 	`role` text NOT NULL,
 	`content` text NOT NULL,
 	`created_at` text NOT NULL,
+	FOREIGN KEY (`project_id`) REFERENCES `projects`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`thread_id`) REFERENCES `chat_threads`(`id`) ON UPDATE no action ON DELETE cascade
+);
+--> statement-breakpoint
+CREATE TABLE `chat_threads` (
+	`id` text PRIMARY KEY NOT NULL,
+	`project_id` text NOT NULL,
+	`scope` text NOT NULL,
+	`title` text NOT NULL,
+	`status` text NOT NULL,
+	`created_at` text NOT NULL,
+	`updated_at` text NOT NULL,
 	FOREIGN KEY (`project_id`) REFERENCES `projects`(`id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint
@@ -31,7 +44,6 @@ CREATE TABLE `events` (
 CREATE TABLE `explorer_configs` (
 	`project_id` text PRIMARY KEY NOT NULL,
 	`domains_json` text NOT NULL,
-	`preset_ids_json` text NOT NULL,
 	`include_agent_suggestions` integer NOT NULL,
 	`updated_at` text NOT NULL,
 	FOREIGN KEY (`project_id`) REFERENCES `projects`(`id`) ON UPDATE no action ON DELETE cascade
@@ -75,6 +87,24 @@ CREATE TABLE `jobs` (
 	FOREIGN KEY (`project_id`) REFERENCES `projects`(`id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint
+CREATE UNIQUE INDEX `uq_jobs_project_source_url` ON `jobs` (`project_id`,`source`,`url`);--> statement-breakpoint
+CREATE TABLE `page_memory` (
+	`id` text PRIMARY KEY NOT NULL,
+	`fingerprint` text NOT NULL,
+	`url_pattern` text,
+	`trajectory_json` text NOT NULL,
+	`extractor_json` text NOT NULL,
+	`sample_jobs_json` text,
+	`status` text DEFAULT 'untrusted' NOT NULL,
+	`success_count` integer DEFAULT 0 NOT NULL,
+	`failure_count` integer DEFAULT 0 NOT NULL,
+	`consecutive_failures` integer DEFAULT 0 NOT NULL,
+	`last_used_at` text,
+	`last_broken_at` text,
+	`created_at` text NOT NULL
+);
+--> statement-breakpoint
+CREATE INDEX `idx_page_memory_fingerprint_status` ON `page_memory` (`fingerprint`,`status`);--> statement-breakpoint
 CREATE TABLE `profiles` (
 	`project_id` text PRIMARY KEY NOT NULL,
 	`profile_json` text NOT NULL,
@@ -92,7 +122,17 @@ CREATE TABLE `projects` (
 	`updated_at` text NOT NULL
 );
 --> statement-breakpoint
-CREATE UNIQUE INDEX `projects_slug_unique` ON `projects` (`slug`);
+CREATE UNIQUE INDEX `projects_slug_unique` ON `projects` (`slug`);--> statement-breakpoint
+CREATE TABLE `provider_session_runtime` (
+	`thread_id` text PRIMARY KEY NOT NULL,
+	`provider_name` text NOT NULL,
+	`adapter_key` text NOT NULL,
+	`status` text NOT NULL,
+	`last_seen_at` text NOT NULL,
+	`resume_cursor_json` text,
+	`runtime_payload_json` text,
+	FOREIGN KEY (`thread_id`) REFERENCES `chat_threads`(`id`) ON UPDATE no action ON DELETE cascade
+);
 --> statement-breakpoint
 CREATE TABLE `question_answers` (
 	`id` text PRIMARY KEY NOT NULL,
@@ -141,6 +181,40 @@ CREATE TABLE `tasks` (
 	`updated_at` text NOT NULL,
 	`error` text,
 	FOREIGN KEY (`project_id`) REFERENCES `projects`(`id`) ON UPDATE no action ON DELETE cascade
+);
+--> statement-breakpoint
+CREATE TABLE `thread_commands` (
+	`id` text PRIMARY KEY NOT NULL,
+	`command_id` text NOT NULL,
+	`thread_id` text NOT NULL,
+	`command_type` text NOT NULL,
+	`actor` text NOT NULL,
+	`session_id` text NOT NULL,
+	`command_created_at` text NOT NULL,
+	`command_json` text NOT NULL,
+	`created_at` text NOT NULL,
+	FOREIGN KEY (`thread_id`) REFERENCES `chat_threads`(`id`) ON UPDATE no action ON DELETE cascade
+);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `uq_thread_commands_command_id` ON `thread_commands` (`command_id`);--> statement-breakpoint
+CREATE INDEX `idx_thread_commands_thread_created` ON `thread_commands` (`thread_id`,`created_at`);--> statement-breakpoint
+CREATE INDEX `idx_thread_commands_thread_command_created` ON `thread_commands` (`thread_id`,`command_created_at`);--> statement-breakpoint
+CREATE TABLE `thread_events` (
+	`id` text PRIMARY KEY NOT NULL,
+	`thread_id` text NOT NULL,
+	`sequence` integer NOT NULL,
+	`event_type` text NOT NULL,
+	`event_json` text NOT NULL,
+	`created_at` text NOT NULL,
+	FOREIGN KEY (`thread_id`) REFERENCES `chat_threads`(`id`) ON UPDATE no action ON DELETE cascade
+);
+--> statement-breakpoint
+CREATE TABLE `thread_projections` (
+	`thread_id` text PRIMARY KEY NOT NULL,
+	`latest_sequence` integer NOT NULL,
+	`state_json` text NOT NULL,
+	`updated_at` text NOT NULL,
+	FOREIGN KEY (`thread_id`) REFERENCES `chat_threads`(`id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint
 CREATE TABLE `topic_files` (

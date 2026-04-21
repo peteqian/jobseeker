@@ -13,8 +13,20 @@ export type { ActionResult } from "./actions/execute";
 export { actionSchemas } from "./actions/types";
 export type { Action, ActionName } from "./actions/types";
 
-export { runAgent } from "./agent/loop";
-export type { AgentOptions, AgentResult, CodexOutputInfo, StepInfo } from "./agent/loop";
+export { runAgent, buildDecisionPrompt } from "./agent/loop";
+export { createCodexCliDecide } from "./agent/codexCliDecide";
+export type {
+  AgentOptions,
+  AgentResult,
+  Decision,
+  DecisionInput,
+  DistilledTrajectory,
+  Extractor,
+  FoundJob,
+  RawAction,
+  StepInfo,
+  TrajectoryStep,
+} from "./agent/loop";
 export { SYSTEM_PROMPT } from "./agent/prompts";
 
 export { createServer as createMcpServer, runStdioServer } from "./mcp/server";

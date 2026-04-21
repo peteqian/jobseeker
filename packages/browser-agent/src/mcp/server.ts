@@ -3,9 +3,10 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 
 import { executeAction } from "../actions/execute";
-import { runAgent } from "../agent/loop";
 import { BrowserSession, type Page } from "../browser/session";
 import { formatSnapshotForLLM, serializePage } from "../dom/serialize";
+import { runAgent } from "../agent/loop";
+import { createCodexCliDecide } from "../agent/codexCliDecide";
 
 interface SessionRecord {
   session: BrowserSession;
@@ -574,9 +575,8 @@ export function createServer(): McpServer {
           task,
           startUrl,
           maxSteps,
-          model,
-          effort,
           launch: { headless },
+          decide: createCodexCliDecide({ model: model ?? "gpt-5.3-codex", effort }),
         }),
       );
     },

@@ -22,13 +22,15 @@
     "@effect/platform-node-shared": "4.0.0-beta.45",
     "@jobseeker/browser-agent": "workspace:*",
     "@jobseeker/contracts": "workspace:*",
+    "@openai/codex-sdk": "^0.121.0",
     "@opencode-ai/sdk": "^1.14.18",
     "drizzle-orm": "^0.45.2",
     "effect": "4.0.0-beta.45",
     "hono": "^4.10.1",
     "mammoth": "^1.12.0",
     "pdf-parse": "^2.4.5",
-    "zod": "^4.3.6"
+    "zod": "^4.3.6",
+    "zod-to-json-schema": "^3.25.2"
   },
   "devDependencies": {
     "@types/bun": "^1.3.12",

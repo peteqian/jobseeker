@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { runAgent } from "../src/index";
+import { createCodexCliDecide, runAgent } from "../src/index";
 
 interface CliOptions {
   task: string;
@@ -69,8 +69,8 @@ const result = await runAgent({
   task: opts.task,
   startUrl: opts.url,
   maxSteps: opts.maxSteps,
-  model: opts.model,
   launch: { headless: opts.headless },
+  decide: createCodexCliDecide({ model: opts.model ?? "gpt-5.3-codex" }),
   onStep: (step) => {
     const short = step.action.name === "done" ? "" : ` -> ${step.result.message}`;
     console.error(

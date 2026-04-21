@@ -95,20 +95,46 @@ export const questionCards = sqliteTable("question_cards", {
   updatedAt: text("updated_at").notNull(),
 });
 
-export const jobs = sqliteTable("jobs", {
-  id: text("id").primaryKey(),
-  projectId: text("project_id")
-    .notNull()
-    .references(() => projects.id, { onDelete: "cascade" }),
-  source: text("source").notNull(),
-  title: text("title").notNull(),
-  company: text("company").notNull(),
-  location: text("location").notNull(),
-  url: text("url").notNull(),
-  summary: text("summary").notNull(),
-  salary: text("salary"),
-  createdAt: text("created_at").notNull(),
-});
+export const jobs = sqliteTable(
+  "jobs",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    source: text("source").notNull(),
+    title: text("title").notNull(),
+    company: text("company").notNull(),
+    location: text("location").notNull(),
+    url: text("url").notNull(),
+    summary: text("summary").notNull(),
+    salary: text("salary"),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("uq_jobs_project_source_url").on(table.projectId, table.source, table.url),
+  ],
+);
+
+export const pageMemory = sqliteTable(
+  "page_memory",
+  {
+    id: text("id").primaryKey(),
+    fingerprint: text("fingerprint").notNull(),
+    urlPattern: text("url_pattern"),
+    trajectoryJson: text("trajectory_json").notNull(),
+    extractorJson: text("extractor_json").notNull(),
+    sampleJobsJson: text("sample_jobs_json"),
+    status: text("status").notNull().default("untrusted"),
+    successCount: integer("success_count").notNull().default(0),
+    failureCount: integer("failure_count").notNull().default(0),
+    consecutiveFailures: integer("consecutive_failures").notNull().default(0),
+    lastUsedAt: text("last_used_at"),
+    lastBrokenAt: text("last_broken_at"),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [index("idx_page_memory_fingerprint_status").on(table.fingerprint, table.status)],
+);
 
 export const jobMatches = sqliteTable(
   "job_matches",
