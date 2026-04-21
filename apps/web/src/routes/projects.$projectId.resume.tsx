@@ -1,4 +1,5 @@
 import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { CheckCircle2, FileText, GripVertical, Plus, Trash2, Upload } from "lucide-react";
 import { createFileRoute } from "@tanstack/react-router";
 
@@ -15,6 +16,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { resumeVersionsQueryOptions } from "@/lib/query-options";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { useJobseeker } from "@/providers/jobseeker-hooks";
@@ -22,20 +24,16 @@ import { useShellHeaderMeta } from "@/providers/shell-header-context";
 import { useProject } from "@/providers/project-context";
 import type { ResumeVersion } from "@jobseeker/contracts";
 
+const EMPTY_RESUME_VERSIONS: ResumeVersion[] = [];
+
 export const Route = createFileRoute("/projects/$projectId/resume")({
   component: ResumePage,
 });
 
 function ResumePage() {
   const { project } = useProject();
-  const {
-    busyAction,
-    uploadResume,
-    pasteResume,
-    switchActiveResume,
-    deleteResume,
-    getResumeVersionsForProject,
-  } = useJobseeker();
+  const { busyAction, uploadResume, pasteResume, switchActiveResume, deleteResume } =
+    useJobseeker();
 
   const layoutRef = useRef<HTMLDivElement | null>(null);
 
@@ -43,10 +41,11 @@ function ResumePage() {
   const [dialogMode, setDialogMode] = useState<"paste" | "upload">("paste");
   const [resumeText, setResumeText] = useState("");
   const [resumeFile, setResumeFile] = useState<File | null>(null);
-  const [versions, setVersions] = useState<ResumeVersion[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [leftWidth, setLeftWidth] = useState(360);
   const [isResizing, setIsResizing] = useState(false);
+  const versionsQuery = useQuery(resumeVersionsQueryOptions(project.project.id));
+  const versions = versionsQuery.data ?? EMPTY_RESUME_VERSIONS;
   const shellHeader = useMemo(
     () => ({
       title: "Your resume",
@@ -105,26 +104,6 @@ function ResumePage() {
   }
 
   useEffect(() => {
-    let active = true;
-
-    getResumeVersionsForProject(project.project.id)
-      .then((result) => {
-        if (active) {
-          setVersions(result);
-        }
-      })
-      .catch(() => {
-        if (active) {
-          setVersions([]);
-        }
-      });
-
-    return () => {
-      active = false;
-    };
-  }, [project.project.id, project.documents.length, getResumeVersionsForProject]);
-
-  useEffect(() => {
     if (!versions.length) {
       setSelectedId(null);
       return;
@@ -177,8 +156,7 @@ function ResumePage() {
   const content = getContentState(selectedVersion);
 
   async function refreshVersions() {
-    const nextVersions = await getResumeVersionsForProject(project.project.id);
-    setVersions(nextVersions);
+    const nextVersions = await versionsQuery.refetch().then((result) => result.data ?? []);
     return nextVersions;
   }
 

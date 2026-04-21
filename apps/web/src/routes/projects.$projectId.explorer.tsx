@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import type { ColumnDef, SortingState } from "@tanstack/react-table";
 import {
@@ -53,6 +54,8 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
+import { appendThreadToCache } from "@/lib/chat-cache";
+import { explorerThreadsQueryOptions, projectsListQueryOptions } from "@/lib/query-options";
 import {
   FRESHNESS_LABELS,
   addQueryToDomain,
@@ -70,16 +73,28 @@ import { useModelChoice } from "@/hooks/use-model-choice";
 import { useJobseeker, useProjectEvents } from "@/providers/jobseeker-hooks";
 import { useShellHeaderMeta } from "@/providers/shell-header-context";
 import { useProject } from "@/providers/project-context";
-import { createThread, listThreads } from "@/rpc/chat-client";
+import { createThread } from "@/rpc/chat-client";
 
 export const Route = createFileRoute("/projects/$projectId/explorer")({
+  loader: async ({ context, params }) => {
+    const projects = await context.queryClient.ensureQueryData(projectsListQueryOptions());
+    const project = projects.find((entry) => entry.project.slug === params.projectId);
+
+    if (!project) {
+      return;
+    }
+
+    await context.queryClient.ensureQueryData(explorerThreadsQueryOptions(project.project.id));
+  },
   component: ExplorerPage,
 });
 
 const FRESHNESS_OPTIONS: ExplorerFreshness[] = ["24h", "week", "month", "any"];
+const EMPTY_THREADS: ChatThread[] = [];
 
 function ExplorerPage() {
   const { project } = useProject();
+  const queryClient = useQueryClient();
   const projectId = project.project.id;
   const { busyAction, startTask, saveExplorer } = useJobseeker();
   const events = useProjectEvents(projectId);
@@ -92,9 +107,9 @@ function ExplorerPage() {
   const hasProfile = Boolean(project.profile);
   const savedDomains = project.explorer.domains;
   const savedIncludeAgentSuggestions = project.explorer.includeAgentSuggestions;
+  const threads = useQuery(explorerThreadsQueryOptions(projectId)).data ?? EMPTY_THREADS;
 
   const [draftDomains, setDraftDomains] = useState<ExplorerDomainConfig[]>(savedDomains);
-  const [threads, setThreads] = useState<ChatThread[]>([]);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [draftIncludeAgent, setDraftIncludeAgent] = useState(savedIncludeAgentSuggestions);
   const [addDomainInput, setAddDomainInput] = useState("");
@@ -111,20 +126,12 @@ function ExplorerPage() {
   }, [savedIncludeAgentSuggestions]);
 
   useEffect(() => {
-    let cancelled = false;
-    void listThreads(projectId, "explorer").then((rows) => {
-      if (cancelled) return;
-      setThreads(rows);
-      const runThreads = rows.filter((thread) => thread.title.startsWith("Run "));
-      const latestRun = [...runThreads].sort(
-        (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
-      )[0];
-      setActiveThreadId((current) => current ?? latestRun?.id ?? rows[0]?.id ?? null);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [projectId]);
+    const runThreads = threads.filter((thread) => thread.title.startsWith("Run "));
+    const latestRun = [...runThreads].sort(
+      (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+    )[0];
+    setActiveThreadId((current) => current ?? latestRun?.id ?? threads[0]?.id ?? null);
+  }, [threads]);
 
   const shellHeader = useMemo(
     () => ({
@@ -257,7 +264,7 @@ function ExplorerPage() {
       "explorer",
       `Run ${new Date().toLocaleString()}`,
     );
-    setThreads((prev) => [...prev, runThread]);
+    appendThreadToCache(queryClient, projectId, "explorer", runThread);
     setActiveThreadId(runThread.id);
 
     await startTask(

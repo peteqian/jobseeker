@@ -7,6 +7,7 @@ import type {
   ResumeVersion,
   RuntimeEvent,
   StartTaskInput,
+  StructuredProfile,
   ProjectSnapshot,
   UpdateQuestionCardInput,
   UpdateExplorerConfigInput,
@@ -109,6 +110,19 @@ export async function updateQuestionCard(input: UpdateQuestionCardInput) {
       body: JSON.stringify({ answer: input.answer }),
     },
   );
+
+  return parseJson<ProjectSnapshot>(response);
+}
+
+export async function saveProjectProfile(
+  projectId: string,
+  profile: StructuredProfile,
+): Promise<ProjectSnapshot> {
+  const response = await fetch(apiUrl(`/api/projects/${projectId}/profile`), {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(profile),
+  });
 
   return parseJson<ProjectSnapshot>(response);
 }

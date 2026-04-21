@@ -35,9 +35,21 @@ export function registerProjectRoutes(app: Hono) {
 
   app.get("/api/projects/:projectId", async (c) => {
     await ensureProjectSlugs();
-    const projectId = c.req.param("projectId");
+    const projectIdOrSlug = c.req.param("projectId");
 
-    const snapshot = await buildProjectSnapshot(projectId);
+    let snapshot = await buildProjectSnapshot(projectIdOrSlug);
+    if (!snapshot) {
+      const project = await db
+        .select({ id: projects.id })
+        .from(projects)
+        .where(eq(projects.slug, projectIdOrSlug))
+        .get();
+
+      if (project) {
+        snapshot = await buildProjectSnapshot(project.id);
+      }
+    }
+
     if (!snapshot) {
       return c.json({ error: "Project not found." }, 404);
     }

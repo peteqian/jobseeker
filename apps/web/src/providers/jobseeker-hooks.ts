@@ -3,7 +3,6 @@ import type {
   PendingQuestion,
   QuestionAnswerMap,
   ResumePasteInput,
-  ResumeVersion,
   RuntimeEvent,
   StartTaskInput,
   ProjectSnapshot,
@@ -18,9 +17,7 @@ import {
   createProject as createProjectRequest,
   deleteProjectResume,
   getAllEvents,
-  getProjects,
   getProjectEvents,
-  getResumeVersions,
   pasteProjectResume,
   startProjectTask,
   submitQuestionAnswers,
@@ -29,6 +26,8 @@ import {
   updateProjectExplorer,
   uploadProjectResume,
 } from "@/lib/api";
+import { projectsListQueryOptions } from "@/lib/query-options";
+import { eventsKeys, jobseekerKeys, projectsKeys } from "@/lib/query-keys";
 
 type ActionVariables = {
   action: string;
@@ -47,7 +46,6 @@ type JobseekerValue = {
   pasteResume: (projectId: string, input: ResumePasteInput) => Promise<void>;
   switchActiveResume: (projectId: string, documentId: string) => Promise<void>;
   deleteResume: (projectId: string, documentId: string) => Promise<void>;
-  getResumeVersionsForProject: (projectId: string) => Promise<ResumeVersion[]>;
   startTask: (input: StartTaskInput, action: string) => Promise<void>;
   submitAnswers: (
     projectId: string,
@@ -61,33 +59,38 @@ type JobseekerValue = {
   ) => Promise<ExplorerConfigRecord>;
 };
 
-const projectsQueryKey = ["projects"] as const;
-const allEventsQueryKey = ["events", "all"] as const;
-const uiErrorQueryKey = ["jobseeker", "ui", "error"] as const;
-
-function projectEventsQueryKey(projectId: string) {
-  return ["events", "project", projectId] as const;
-}
-
-function resumeVersionsQueryKey(projectId: string) {
-  return ["resume-versions", projectId] as const;
-}
-
-function projectsQueryOptions() {
-  return {
-    queryKey: projectsQueryKey,
-    queryFn: getProjects,
-    initialData: [] as ProjectSnapshot[],
-  };
-}
-
 function allEventsQueryOptions() {
   return {
-    queryKey: allEventsQueryKey,
+    queryKey: eventsKeys.all(),
     queryFn: getAllEvents,
     initialData: [] as RuntimeEvent[],
     enabled: false,
   };
+}
+
+function upsertProjectSnapshot(
+  current: ProjectSnapshot[] | undefined,
+  snapshot: ProjectSnapshot,
+): ProjectSnapshot[] {
+  if (!current) {
+    return [snapshot];
+  }
+
+  const index = current.findIndex((project) => project.project.id === snapshot.project.id);
+  if (index === -1) {
+    return [snapshot, ...current];
+  }
+
+  return current.map((project) =>
+    project.project.id === snapshot.project.id ? snapshot : project,
+  );
+}
+
+function patchProjectExplorer(
+  current: ProjectSnapshot | undefined,
+  explorer: ExplorerConfigRecord,
+): ProjectSnapshot | undefined {
+  return current ? { ...current, explorer } : current;
 }
 
 function isQueryCancelledError(caughtError: unknown): boolean {
@@ -107,11 +110,11 @@ function useJobseekerActionMutation<TData, TVariables extends ActionVariables>(o
     mutationKey: ["jobseeker"],
     mutationFn: options.mutationFn,
     onMutate: async () => {
-      queryClient.setQueryData(uiErrorQueryKey, null);
+      queryClient.setQueryData(jobseekerKeys.uiError(), null);
     },
     onError: (caughtError) => {
       queryClient.setQueryData(
-        uiErrorQueryKey,
+        jobseekerKeys.uiError(),
         caughtError instanceof Error ? caughtError.message : "Something went wrong.",
       );
     },
@@ -121,10 +124,13 @@ function useJobseekerActionMutation<TData, TVariables extends ActionVariables>(o
 
 export function useJobseeker(): JobseekerValue {
   const queryClient = useQueryClient();
-  const { data: projects = [] } = useQuery(projectsQueryOptions());
+  const { data: projects = [] } = useQuery({
+    ...projectsListQueryOptions(),
+    initialData: [] as ProjectSnapshot[],
+  });
   const { data: allEvents = [] } = useQuery(allEventsQueryOptions());
   const { data: error = null } = useQuery({
-    queryKey: uiErrorQueryKey,
+    queryKey: jobseekerKeys.uiError(),
     queryFn: async () => null,
     initialData: null as string | null,
     staleTime: Number.POSITIVE_INFINITY,
@@ -140,13 +146,17 @@ export function useJobseeker(): JobseekerValue {
 
   const refreshProjects = React.useCallback(
     async (_preferredProjectId?: string) => {
-      void _preferredProjectId;
       try {
-        await queryClient.invalidateQueries({ queryKey: projectsQueryKey });
-        return await queryClient.fetchQuery(projectsQueryOptions());
+        await queryClient.invalidateQueries({ queryKey: projectsKeys.list() });
+        if (_preferredProjectId) {
+          await queryClient.invalidateQueries({
+            queryKey: projectsKeys.detail(_preferredProjectId),
+          });
+        }
+        return await queryClient.fetchQuery(projectsListQueryOptions());
       } catch (caughtError) {
         if (isQueryCancelledError(caughtError)) {
-          return queryClient.getQueryData<ProjectSnapshot[]>(projectsQueryKey) ?? [];
+          return queryClient.getQueryData<ProjectSnapshot[]>(projectsKeys.list()) ?? [];
         }
         throw caughtError;
       }
@@ -155,15 +165,35 @@ export function useJobseeker(): JobseekerValue {
   );
 
   const refreshAllEvents = React.useCallback(async () => {
-    await queryClient.invalidateQueries({ queryKey: allEventsQueryKey });
+    await queryClient.invalidateQueries({ queryKey: eventsKeys.all() });
     await queryClient.fetchQuery(allEventsQueryOptions());
   }, [queryClient]);
+
+  const invalidateProject = React.useCallback(
+    async (projectId: string) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: projectsKeys.detail(projectId) }),
+        queryClient.invalidateQueries({ queryKey: projectsKeys.list() }),
+      ]);
+    },
+    [queryClient],
+  );
+
+  const storeProjectSnapshot = React.useCallback(
+    (snapshot: ProjectSnapshot) => {
+      queryClient.setQueryData(projectsKeys.detail(snapshot.project.id), snapshot);
+      queryClient.setQueryData<ProjectSnapshot[]>(projectsKeys.list(), (current) =>
+        upsertProjectSnapshot(current, snapshot),
+      );
+    },
+    [queryClient],
+  );
 
   const createProjectMutation = useJobseekerActionMutation({
     mutationFn: async ({ title }: ActionVariables & { title: string }) =>
       createProjectRequest(title),
-    onSuccess: async () => {
-      await refreshProjects();
+    onSuccess: async (project) => {
+      storeProjectSnapshot(project);
     },
   });
   const uploadResumeMutation = useJobseekerActionMutation({
@@ -175,8 +205,8 @@ export function useJobseeker(): JobseekerValue {
     },
     onSuccess: async (_, { projectId }) => {
       await Promise.all([
-        refreshProjects(projectId),
-        queryClient.invalidateQueries({ queryKey: resumeVersionsQueryKey(projectId) }),
+        invalidateProject(projectId),
+        queryClient.invalidateQueries({ queryKey: projectsKeys.resumeVersions(projectId) }),
       ]);
     },
   });
@@ -189,8 +219,8 @@ export function useJobseeker(): JobseekerValue {
     },
     onSuccess: async (_, { projectId }) => {
       await Promise.all([
-        refreshProjects(projectId),
-        queryClient.invalidateQueries({ queryKey: resumeVersionsQueryKey(projectId) }),
+        invalidateProject(projectId),
+        queryClient.invalidateQueries({ queryKey: projectsKeys.resumeVersions(projectId) }),
       ]);
     },
   });
@@ -199,12 +229,13 @@ export function useJobseeker(): JobseekerValue {
       projectId,
       documentId,
     }: ActionVariables & { projectId: string; documentId: string }) => {
-      await switchActiveResumeRequest(projectId, documentId);
+      return switchActiveResumeRequest(projectId, documentId);
     },
-    onSuccess: async (_, { projectId }) => {
+    onSuccess: async (project, { projectId }) => {
+      storeProjectSnapshot(project);
       await Promise.all([
-        refreshProjects(projectId),
-        queryClient.invalidateQueries({ queryKey: resumeVersionsQueryKey(projectId) }),
+        queryClient.invalidateQueries({ queryKey: projectsKeys.list() }),
+        queryClient.invalidateQueries({ queryKey: projectsKeys.resumeVersions(projectId) }),
       ]);
     },
   });
@@ -213,12 +244,13 @@ export function useJobseeker(): JobseekerValue {
       projectId,
       documentId,
     }: ActionVariables & { projectId: string; documentId: string }) => {
-      await deleteProjectResume(projectId, documentId);
+      return deleteProjectResume(projectId, documentId);
     },
-    onSuccess: async (_, { projectId }) => {
+    onSuccess: async (project, { projectId }) => {
+      storeProjectSnapshot(project);
       await Promise.all([
-        refreshProjects(projectId),
-        queryClient.invalidateQueries({ queryKey: resumeVersionsQueryKey(projectId) }),
+        queryClient.invalidateQueries({ queryKey: projectsKeys.list() }),
+        queryClient.invalidateQueries({ queryKey: projectsKeys.resumeVersions(projectId) }),
       ]);
     },
   });
@@ -227,7 +259,7 @@ export function useJobseeker(): JobseekerValue {
       await startProjectTask(input);
     },
     onSuccess: async (_, { input }) => {
-      await refreshProjects(input.projectId);
+      await invalidateProject(input.projectId);
     },
   });
   const submitAnswersMutation = useJobseekerActionMutation({
@@ -248,10 +280,10 @@ export function useJobseeker(): JobseekerValue {
         }
       }
 
-      await submitQuestionAnswers(projectId, payload);
+      return submitQuestionAnswers(projectId, payload);
     },
-    onSuccess: async (_, { projectId }) => {
-      await refreshProjects(projectId);
+    onSuccess: async (project) => {
+      storeProjectSnapshot(project);
     },
   });
   const saveExplorerMutation = useJobseekerActionMutation({
@@ -262,21 +294,30 @@ export function useJobseeker(): JobseekerValue {
       projectId: string;
       input: UpdateExplorerConfigInput;
     }) => updateProjectExplorer(projectId, input),
-    onSuccess: async (_, { projectId }) => {
-      await refreshProjects(projectId);
+    onSuccess: async (explorer, { projectId }) => {
+      queryClient.setQueryData<ProjectSnapshot>(projectsKeys.detail(projectId), (current) =>
+        patchProjectExplorer(current, explorer),
+      );
+      queryClient.setQueryData<ProjectSnapshot[]>(
+        projectsKeys.list(),
+        (current) =>
+          current?.map((project) =>
+            project.project.id === projectId ? patchProjectExplorer(project, explorer)! : project,
+          ) ?? current,
+      );
     },
   });
   const updateQuestionCardMutation = useJobseekerActionMutation({
     mutationFn: async ({ input }: ActionVariables & { input: UpdateQuestionCardInput }) => {
-      await updateQuestionCardRequest(input);
+      return updateQuestionCardRequest(input);
     },
-    onSuccess: async (_, { input }) => {
-      await refreshProjects(input.projectId);
+    onSuccess: async (project) => {
+      storeProjectSnapshot(project);
     },
   });
 
   const clearError = React.useCallback(() => {
-    queryClient.setQueryData(uiErrorQueryKey, null);
+    queryClient.setQueryData(jobseekerKeys.uiError(), null);
   }, [queryClient]);
 
   const createProject = React.useCallback(
@@ -335,15 +376,6 @@ export function useJobseeker(): JobseekerValue {
     },
     [updateQuestionCardMutation],
   );
-  const getResumeVersionsForProject = React.useCallback(
-    (projectId: string) =>
-      queryClient.fetchQuery({
-        queryKey: resumeVersionsQueryKey(projectId),
-        queryFn: () => getResumeVersions(projectId),
-      }),
-    [queryClient],
-  );
-
   return React.useMemo(
     () => ({
       projects,
@@ -358,7 +390,6 @@ export function useJobseeker(): JobseekerValue {
       pasteResume,
       switchActiveResume,
       deleteResume,
-      getResumeVersionsForProject,
       startTask,
       submitAnswers,
       updateQuestionCard,
@@ -377,7 +408,6 @@ export function useJobseeker(): JobseekerValue {
       pasteResume,
       switchActiveResume,
       deleteResume,
-      getResumeVersionsForProject,
       startTask,
       submitAnswers,
       updateQuestionCard,
@@ -388,9 +418,8 @@ export function useJobseeker(): JobseekerValue {
 
 export function useProjectEvents(projectId: string | null) {
   const queryClient = useQueryClient();
-  const { refreshProjects } = useJobseeker();
   const { data: events = [] } = useQuery({
-    queryKey: projectId ? projectEventsQueryKey(projectId) : ["events", "project", "none"],
+    queryKey: projectId ? eventsKeys.project(projectId) : ["events", "project", "none"],
     queryFn: () => (projectId ? getProjectEvents(projectId) : Promise.resolve([])),
     enabled: projectId !== null,
     initialData: [] as RuntimeEvent[],
@@ -418,18 +447,16 @@ export function useProjectEvents(projectId: string | null) {
 
     const onEvent = (rawEvent: MessageEvent<string>) => {
       const event = JSON.parse(rawEvent.data) as RuntimeEvent;
-      queryClient.setQueryData<RuntimeEvent[]>(projectEventsQueryKey(projectId), (current = []) =>
+      queryClient.setQueryData<RuntimeEvent[]>(eventsKeys.project(projectId), (current = []) =>
         current.some((entry) => entry.id === event.id) ? current : [event, ...current],
       );
-      queryClient.setQueryData<RuntimeEvent[]>(allEventsQueryKey, (current = []) =>
+      queryClient.setQueryData<RuntimeEvent[]>(eventsKeys.all(), (current = []) =>
         current.some((entry) => entry.id === event.id) ? current : [event, ...current],
       );
-      void refreshProjects(projectId).catch((caughtError) => {
-        if (isQueryCancelledError(caughtError)) {
-          return;
-        }
-        console.error("Failed to refresh projects after event", caughtError);
-      });
+      if (event.type !== "task.progress" && event.type !== "task.waiting_for_user") {
+        void queryClient.invalidateQueries({ queryKey: projectsKeys.detail(projectId) });
+        void queryClient.invalidateQueries({ queryKey: projectsKeys.list() });
+      }
     };
 
     for (const type of types) {
@@ -441,7 +468,7 @@ export function useProjectEvents(projectId: string | null) {
     return () => {
       source.close();
     };
-  }, [queryClient, refreshProjects, projectId]);
+  }, [queryClient, projectId]);
 
   return events;
 }

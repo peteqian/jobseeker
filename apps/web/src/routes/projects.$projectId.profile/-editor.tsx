@@ -1,5 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { useForm, useStore } from "@tanstack/react-form";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Briefcase, MapPin, Plus, Trash2, X } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -7,10 +8,11 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { projectsKeys } from "@/lib/query-keys";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 
-import { apiUrl } from "@/lib/api";
+import { saveProjectProfile } from "@/lib/api";
 import type {
   ProfileExperience,
   ProfileLocation,
@@ -120,11 +122,25 @@ export const ProfileEditor = forwardRef<ProfileEditorHandle, ProfileEditorProps>
   ) {
     const initialProfileToken = `${initialProfile.version}:${initialProfile.updatedAt}`;
     const initialEditorProfile = useMemo(() => toEditableProfile(initialProfile), [initialProfile]);
+    const queryClient = useQueryClient();
     const [skillDraft, setSkillDraft] = useState("");
     const [lastSaved, setLastSaved] = useState<Date | null>(null);
     const [savedSerializedProfile, setSavedSerializedProfile] = useState(() =>
       JSON.stringify(initialProfile),
     );
+    const saveProfileMutation = useMutation({
+      mutationFn: (profile: StructuredProfile) => saveProjectProfile(projectId, profile),
+      onSuccess: (snapshot) => {
+        queryClient.setQueryData(projectsKeys.detail(projectId), snapshot);
+        queryClient.setQueryData<ProjectSnapshot[]>(
+          projectsKeys.list(),
+          (current) =>
+            current?.map((project) =>
+              project.project.id === snapshot.project.id ? snapshot : project,
+            ) ?? current,
+        );
+      },
+    });
 
     const form = useForm({
       defaultValues: initialEditorProfile,
@@ -134,18 +150,7 @@ export const ProfileEditor = forwardRef<ProfileEditorHandle, ProfileEditorProps>
           version: value.version + 1,
           updatedAt: new Date().toISOString(),
         };
-
-        const response = await fetch(apiUrl(`/api/projects/${projectId}/profile`), {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(nextProfilePayload),
-        });
-
-        if (!response.ok) {
-          throw new Error("Failed to save profile");
-        }
-
-        const snapshot = (await response.json()) as ProjectSnapshot;
+        const snapshot = await saveProfileMutation.mutateAsync(nextProfilePayload);
         const savedProfile = snapshot.profile;
 
         if (!savedProfile) {

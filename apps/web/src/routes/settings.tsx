@@ -1,23 +1,29 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useState } from "react";
 import { CheckCircle2, Loader2, RefreshCw, XCircle } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  chatProvidersQueryOptions,
+  connectionsQueryOptions,
+  providerSettingsQueryOptions,
+} from "@/lib/query-options";
+import { settingsKeys } from "@/lib/query-keys";
 import { Switch } from "@/components/ui/switch";
 import { useShellHeaderMeta } from "@/providers/shell-header-context";
 import { useTheme } from "@/components/theme-provider";
-import {
-  type ConnectionStatus,
-  type ProviderSettings,
-  getConnections,
-  getProviderSettings,
-  updateProviderSettings,
-} from "@/lib/api";
+import { type ConnectionStatus, type ProviderSettings, updateProviderSettings } from "@/lib/api";
 
 export const Route = createFileRoute("/settings")({
+  loader: async ({ context }) => {
+    await Promise.all([
+      context.queryClient.ensureQueryData(connectionsQueryOptions()),
+      context.queryClient.ensureQueryData(providerSettingsQueryOptions()),
+    ]);
+  },
   component: SettingsPage,
 });
 
@@ -130,31 +136,66 @@ function SettingsPage() {
   useShellHeaderMeta(SETTINGS_HEADER);
   const queryClient = useQueryClient();
   const { theme, setTheme, routerDevtools, setRouterDevtools } = useTheme();
-  const [connections, setConnections] = useState<ConnectionStatus[]>([]);
+  const connectionsQuery = useQuery(connectionsQueryOptions());
+  const providerSettingsQuery = useQuery(providerSettingsQueryOptions());
+  const connections = connectionsQuery.data ?? [];
   const [providerSettings, setProviderSettings] = useState<ProviderSettings | null>(null);
   const [savedProviderSettings, setSavedProviderSettings] = useState<ProviderSettings | null>(null);
-  const [loading, setLoading] = useState(true);
   const [savingProviderId, setSavingProviderId] = useState<ProviderId | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const loading = connectionsQuery.isLoading || providerSettingsQuery.isLoading;
 
   const refresh = useCallback(async () => {
-    setLoading(true);
     setError(null);
 
     try {
-      const [connectionResult, settingsResult] = await Promise.all([
-        getConnections(),
-        getProviderSettings(),
-      ]);
-      setConnections(connectionResult);
-      setProviderSettings(settingsResult);
-      setSavedProviderSettings(settingsResult);
+      await Promise.all([connectionsQuery.refetch(), providerSettingsQuery.refetch()]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to check connections");
-    } finally {
-      setLoading(false);
     }
-  }, []);
+  }, [connectionsQuery, providerSettingsQuery]);
+
+  useEffect(() => {
+    if (!providerSettingsQuery.data) {
+      return;
+    }
+
+    setProviderSettings(providerSettingsQuery.data);
+    setSavedProviderSettings(providerSettingsQuery.data);
+  }, [providerSettingsQuery.data]);
+
+  useEffect(() => {
+    if (connectionsQuery.error) {
+      setError(
+        connectionsQuery.error instanceof Error
+          ? connectionsQuery.error.message
+          : "Failed to check connections",
+      );
+    }
+  }, [connectionsQuery.error]);
+
+  useEffect(() => {
+    if (providerSettingsQuery.error) {
+      setError(
+        providerSettingsQuery.error instanceof Error
+          ? providerSettingsQuery.error.message
+          : "Failed to load provider settings",
+      );
+    }
+  }, [providerSettingsQuery.error]);
+
+  const saveProviderMutation = useMutation({
+    mutationFn: (settings: Partial<ProviderSettings>) => updateProviderSettings(settings),
+    onSuccess: async (saved) => {
+      queryClient.setQueryData(settingsKeys.providers(), saved);
+      setProviderSettings(saved);
+      setSavedProviderSettings(saved);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: settingsKeys.connections() }),
+        queryClient.invalidateQueries({ queryKey: chatProvidersQueryOptions().queryKey }),
+      ]);
+    },
+  });
 
   const saveProvider = useCallback(
     async (providerId: ProviderId) => {
@@ -170,19 +211,14 @@ function SettingsPage() {
             : { opencode: providerSettings.opencode };
 
       try {
-        const saved = await updateProviderSettings(patch);
-        setProviderSettings(saved);
-        setSavedProviderSettings(saved);
-        await queryClient.invalidateQueries({ queryKey: ["chat", "providers"] });
-        const result = await getConnections();
-        setConnections(result);
+        await saveProviderMutation.mutateAsync(patch);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to save provider settings");
       } finally {
         setSavingProviderId(null);
       }
     },
-    [providerSettings, queryClient],
+    [providerSettings, saveProviderMutation],
   );
 
   const codexConnection = connections.find((connection) => connection.id === "codex") ?? null;
@@ -192,11 +228,6 @@ function SettingsPage() {
   const codexDirty = isProviderDirty(providerSettings, savedProviderSettings, "codex");
   const claudeDirty = isProviderDirty(providerSettings, savedProviderSettings, "claude");
   const opencodeDirty = isProviderDirty(providerSettings, savedProviderSettings, "opencode");
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden p-6 sm:p-8">
       <div className="mx-auto flex w-full max-w-3xl min-h-0 flex-1 flex-col gap-8 overflow-y-auto pr-2">

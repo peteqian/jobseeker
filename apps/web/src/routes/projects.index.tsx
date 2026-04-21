@@ -4,12 +4,14 @@ import { Link, createFileRoute } from "@tanstack/react-router";
 import { Badge } from "@/components/ui/badge";
 
 import { projectRouteId } from "@/lib/project-route";
+import { projectsListQueryOptions } from "@/lib/query-options";
 import { getProjectStages } from "@/lib/project";
 import { useJobseeker } from "@/providers/jobseeker-hooks";
 
 const STAGE_COUNT = 5;
 
 export const Route = createFileRoute("/projects/")({
+  loader: ({ context }) => context.queryClient.ensureQueryData(projectsListQueryOptions()),
   component: WorkspacesPage,
 });
 

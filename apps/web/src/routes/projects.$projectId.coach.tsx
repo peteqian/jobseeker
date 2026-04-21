@@ -1,5 +1,6 @@
-import type { ChatThread, TopicFileMeta } from "@jobseeker/contracts";
+import type { ChatThread } from "@jobseeker/contracts";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { MessageSquarePlus, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 
@@ -10,22 +11,42 @@ import { ChatPanel } from "@/components/chat/chat-panel";
 import { TopicArtifactPanel } from "@/components/chat/topic-artifact-panel";
 
 import { useModelChoice } from "@/hooks/use-model-choice";
+import { appendThreadToCache } from "@/lib/chat-cache";
+import {
+  chatThreadsQueryOptions,
+  chatTopicsQueryOptions,
+  projectsListQueryOptions,
+} from "@/lib/query-options";
+import { projectsKeys } from "@/lib/query-keys";
 import { projectRouteId } from "@/lib/project-route";
-import type { ChatStreamTopicUpdate } from "@/rpc/types";
 import { getResumeDoc } from "@/lib/project";
 import { useChat } from "@/hooks/use-chat";
-import { useJobseeker } from "@/providers/jobseeker-hooks";
 import { useShellHeaderMeta } from "@/providers/shell-header-context";
 import { useProject } from "@/providers/project-context";
-import { createThread, listThreads } from "@/rpc/chat-client";
+import { createThread } from "@/rpc/chat-client";
+
+const EMPTY_THREADS: ChatThread[] = [];
 
 export const Route = createFileRoute("/projects/$projectId/coach")({
+  loader: async ({ context, params }) => {
+    const projects = await context.queryClient.ensureQueryData(projectsListQueryOptions());
+    const project = projects.find((entry) => projectRouteId(entry) === params.projectId);
+
+    if (!project) {
+      return;
+    }
+
+    await Promise.all([
+      context.queryClient.ensureQueryData(chatThreadsQueryOptions(project.project.id, "coach")),
+      context.queryClient.ensureQueryData(chatTopicsQueryOptions(project.project.id)),
+    ]);
+  },
   component: ChatPage,
 });
 
 function ChatPage() {
   const { project } = useProject();
-  const { refreshProjects } = useJobseeker();
+  const queryClient = useQueryClient();
   const resumeDoc = getResumeDoc(project);
   const projectId = project.project.id;
   const projectSlug = projectRouteId(project);
@@ -41,72 +62,18 @@ function ChatPage() {
   useShellHeaderMeta(shellHeader);
 
   const { providers, selection, setSelection } = useModelChoice(projectId, "coach");
-  const [threads, setThreads] = useState<ChatThread[]>([]);
+  const threads = useQuery(chatThreadsQueryOptions(projectId, "coach")).data ?? EMPTY_THREADS;
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [showSessions, setShowSessions] = useState(true);
 
   useEffect(() => {
-    let cancelled = false;
-    void listThreads(projectId, "coach").then((rows) => {
-      if (cancelled) return;
-      setThreads(rows);
-      setActiveThreadId((current) => current ?? rows[0]?.id ?? null);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [projectId]);
-
-  // Track topic files locally so new ones show immediately
-  const [topicFiles, setTopicFiles] = useState<TopicFileMeta[]>(project.topicFiles);
-
-  // Live content map — holds content pushed from streaming before fetch
-  const [liveContent, setLiveContent] = useState(() => new Map<string, string>());
-
-  const handleTopicUpdate = useCallback(
-    (update: ChatStreamTopicUpdate) => {
-      setLiveContent((prev) => new Map(prev).set(update.topicId, update.content));
-
-      // Upsert the topic in local state
-      setTopicFiles((prev) => {
-        const exists = prev.find((t) => t.id === update.topicId);
-        if (exists) {
-          return prev.map((t) =>
-            t.id === update.topicId
-              ? {
-                  ...t,
-                  title: update.title,
-                  status: update.status,
-                  updatedAt: new Date().toISOString(),
-                }
-              : t,
-          );
-        }
-        return [
-          ...prev,
-          {
-            id: update.topicId,
-            projectId: project.project.id,
-            slug: update.slug,
-            title: update.title,
-            status: update.status,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-          },
-        ];
-      });
-    },
-    [project.project.id],
-  );
-
-  const handleTopicUpdates = useCallback((_updates: TopicFileMeta[]) => {
-    // The individual topicUpdate events already handled local state.
-    // This is just a confirmation — we can refresh from server for consistency.
-  }, []);
+    setActiveThreadId((current) => current ?? threads[0]?.id ?? null);
+  }, [threads]);
 
   const handleComplete = useCallback(() => {
-    void refreshProjects(projectId);
-  }, [refreshProjects, projectId]);
+    void queryClient.invalidateQueries({ queryKey: projectsKeys.detail(projectId) });
+    void queryClient.invalidateQueries({ queryKey: projectsKeys.list() });
+  }, [projectId, queryClient]);
 
   const activeThread = threads.find((thread) => thread.id === activeThreadId) ?? null;
 
@@ -114,14 +81,12 @@ function ChatPage() {
     projectId,
     threadId: activeThreadId ?? "",
     selection,
-    onTopicUpdate: handleTopicUpdate,
-    onTopicUpdates: handleTopicUpdates,
     onComplete: handleComplete,
   });
 
   async function handleCreateThread() {
     const created = await createThread(projectId, "coach");
-    setThreads((prev) => [...prev, created]);
+    appendThreadToCache(queryClient, projectId, "coach", created);
     setActiveThreadId(created.id);
   }
 
@@ -243,7 +208,7 @@ function ChatPage() {
       </div>
 
       {/* Topic artifact panel */}
-      <TopicArtifactPanel projectId={projectId} topics={topicFiles} liveContent={liveContent} />
+      <TopicArtifactPanel projectId={projectId} initialTopics={project.topicFiles} />
     </div>
   );
 }
