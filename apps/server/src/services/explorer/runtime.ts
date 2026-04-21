@@ -14,16 +14,16 @@ import { createCodexThread, ensureCodexAuthInHome } from "../../lib/codex";
 import { logInfo, logWarn } from "../../lib/log";
 import { ensureCodexHomeDir, ensureScopeDir } from "../../lib/paths";
 import {
-  buildPairDirSlug,
+  buildQueryProfileKey,
   getLaunchOptions,
   getRetryLaunchOptions,
   isBotInterstitial,
 } from "./browserLaunch";
 import { computeFingerprint, extractUrlPattern } from "./fingerprint";
 import {
-  lookupPageMemory,
-  markPageMemoryFailure,
-  markPageMemorySuccess,
+  findReusablePageMemory,
+  recordPageMemoryFailure,
+  recordPageMemorySuccess,
   savePageMemory,
 } from "./memory";
 import {
@@ -100,6 +100,14 @@ const DECISION_WIRE_SCHEMA = z.object({
   success: NULLABLE_BOOLEAN_SCHEMA,
 });
 
+/**
+ * Executes one explorer `(domain, query)` run against a real browser session.
+ *
+ * The function first attempts to replay a previously learned trajectory keyed
+ * on the landing-page fingerprint. If that fast path fails, it falls back to a
+ * Codex-backed agent loop and validates any newly distilled trajectory before
+ * saving it for future cold runs.
+ */
 export async function findJobsForQuery(input: {
   domain: string;
   query: string;
@@ -172,7 +180,7 @@ export async function findJobsForQuery(input: {
       }
 
       const { fingerprint: landingFingerprint } = await computeFingerprint(page);
-      const memory = await lookupPageMemory(landingFingerprint);
+      const memory = await findReusablePageMemory(landingFingerprint);
       if (memory) {
         logInfo("explorer page memory hit", {
           domain: input.domain,
@@ -192,7 +200,7 @@ export async function findJobsForQuery(input: {
             if (input.signal.aborted) break;
             await input.onFoundJob?.(job);
           }
-          await markPageMemorySuccess(memory.id, replayResult.jobs.slice(0, 3));
+          await recordPageMemorySuccess(memory.id, replayResult.jobs.slice(0, 3));
           return {
             success: true,
             summary: `Replayed trajectory ${memory.id}.`,
@@ -200,7 +208,7 @@ export async function findJobsForQuery(input: {
             steps: 0,
           };
         }
-        const nextStatus = await markPageMemoryFailure(memory.id);
+        const nextStatus = await recordPageMemoryFailure(memory.id);
         logWarn("explorer replay failed", {
           domain: input.domain,
           query: input.query,
@@ -355,7 +363,7 @@ export async function findJobsForQuery(input: {
     }
   };
 
-  const pairSlug = buildPairDirSlug(input.domain, input.query);
+  const pairSlug = buildQueryProfileKey(input.domain, input.query);
 
   try {
     let result = await runOnce(getLaunchOptions(pairSlug), false);
@@ -401,6 +409,13 @@ export async function findJobsForQuery(input: {
   }
 }
 
+/**
+ * Validates a distilled trajectory in an isolated browser profile before we
+ * promote it to reusable page memory.
+ *
+ * Replaying on the mutated agent session would hide issues caused by cookies,
+ * storage, or prior navigation state.
+ */
 async function validateTrajectoryOnFreshSession(input: {
   trajectory: Parameters<typeof replayTrajectory>[0]["trajectory"];
   query: string;
@@ -435,6 +450,10 @@ async function validateTrajectoryOnFreshSession(input: {
   }
 }
 
+/**
+ * Normalizes the different abort/error shapes produced by browsers, SDKs, and
+ * explicit `AbortController` usage into a single control-flow check.
+ */
 export function isAbortLikeError(error: unknown): boolean {
   if (!error) return false;
   const maybeName =
@@ -449,6 +468,10 @@ export function isAbortLikeError(error: unknown): boolean {
   return normalized.includes("aborted") || normalized.includes("aborterror");
 }
 
+/**
+ * Converts the explorer-specific wire schema into the generic browser-agent
+ * `Decision` shape consumed by `runAgent`.
+ */
 function normalizeDecision(parsed: z.infer<typeof DECISION_WIRE_SCHEMA>): Decision {
   return {
     thought: parsed.thought ?? undefined,

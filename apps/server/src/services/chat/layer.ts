@@ -30,7 +30,7 @@ import {
   tryRecordThreadCommand,
 } from "./projectionStore";
 import {
-  ensureDefaultThread,
+  getOrCreateDefaultThread,
   getThread,
   getThreadMessages,
   toTopicMeta,
@@ -91,7 +91,7 @@ export const ChatServiceLive = Layer.effect(
 
       listThreads: (projectId: string, scope: ChatScope) =>
         Effect.promise(async (): Promise<ChatThread[]> => {
-          await ensureDefaultThread(projectId, scope);
+          await getOrCreateDefaultThread(projectId, scope);
           const rows = await db
             .select()
             .from(chatThreads)

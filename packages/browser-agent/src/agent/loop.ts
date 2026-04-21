@@ -5,6 +5,12 @@ import { formatSnapshotForLLM, serializePage } from "../dom/serialize";
 import type { AgentOptions, AgentResult, Decision, DecisionInput, FoundJob } from "./contracts";
 import { SYSTEM_PROMPT } from "./prompts";
 
+/**
+ * Formats the per-step observation payload given to the deciding model.
+ *
+ * Keeping prompt assembly centralized makes the CLI, server, and future
+ * adapters share the same decision contract.
+ */
 export function buildDecisionPrompt(input: DecisionInput): string {
   const historyBlock =
     input.history.length === 0
@@ -21,12 +27,20 @@ Open tabs: ${input.tabs.join(", ")}
 Recent action history:
 ${historyBlock}
 
-Observation:
+  Observation:
 ${input.observation}
 
 Respond with the structured decision described in the system prompt.`;
 }
 
+/**
+ * Runs the core browser-agent loop until completion, abort, or step-budget
+ * exhaustion.
+ *
+ * The loop owns browser orchestration and action execution only. Higher-level
+ * policy such as persistence, scoring, and trajectory validation stays with the
+ * caller via callbacks.
+ */
 export async function runAgent(options: AgentOptions): Promise<AgentResult> {
   const maxSteps = options.maxSteps ?? 40;
 
@@ -185,6 +199,10 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
   }
 }
 
+/**
+ * Parses a model-proposed action against the canonical action schemas and
+ * returns `null` for unknown or malformed payloads instead of throwing.
+ */
 function parseAction(name: string, input: unknown): Action | null {
   if (!isActionName(name)) return null;
   const schema = actionSchemas[name];

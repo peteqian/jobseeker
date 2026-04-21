@@ -3,7 +3,11 @@ import path from "node:path";
 
 import { dataDir } from "../../env";
 
-export function buildPairDirSlug(domain: string, query: string): string {
+/**
+ * Builds a stable browser-profile key per `(domain, query)` pair so concurrent
+ * runs do not fight over the same Chrome profile directory.
+ */
+export function buildQueryProfileKey(domain: string, query: string): string {
   const clean = (value: string) =>
     value
       .toLowerCase()
@@ -15,6 +19,7 @@ export function buildPairDirSlug(domain: string, query: string): string {
   return `${domainSlug}-${querySlug}`;
 }
 
+/** Launch settings for the normal explorer attempt. */
 export function getLaunchOptions(pairSlug: string) {
   const userDataDir = path.join(dataDir, "browser-profiles", `explorer-primary-${pairSlug}`);
   const extensionPaths = readExtensionPathsFromEnv();
@@ -33,6 +38,10 @@ export function getLaunchOptions(pairSlug: string) {
   } as const;
 }
 
+/**
+ * Launch settings for the retry attempt after an anti-bot interstitial is
+ * detected.
+ */
 export function getRetryLaunchOptions(pairSlug: string) {
   const userDataDir = path.join(dataDir, "browser-profiles", `explorer-retry-${pairSlug}`);
   const extensionPaths = readExtensionPathsFromEnv();
@@ -51,6 +60,7 @@ export function getRetryLaunchOptions(pairSlug: string) {
   } as const;
 }
 
+/** Reads optional unpacked browser extensions from the environment. */
 function readExtensionPathsFromEnv(): string[] {
   const raw = process.env.EXPLORER_EXTENSION_PATHS;
   if (!raw) return [];
@@ -61,6 +71,7 @@ function readExtensionPathsFromEnv(): string[] {
     .filter((value) => value.length > 0 && existsSync(value));
 }
 
+/** Recognizes common anti-bot/interstitial page summaries from agent output. */
 export function isBotInterstitial(summary: string): boolean {
   const text = summary.toLowerCase();
   return (

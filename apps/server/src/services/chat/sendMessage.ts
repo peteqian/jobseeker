@@ -11,14 +11,20 @@ import { logError, logInfo, logWarn } from "../../lib/log";
 import { ensureCodexHomeDir, ensureScopeDir } from "../../lib/paths";
 import { buildSystemPrompt, parseTopicUpdates, stripTopicMarkers } from "../../prompts/chat";
 import { topicPath, writeTopicFile } from "../topics";
-import { getProfile, getResumeText, getThread, getTopicsWithContent } from "./repository";
-import { emitThreadEvent, touchRuntime } from "./runtimeEvents";
+import { getProfile, getResumeText, getThread, loadTopicsWithContent } from "./repository";
+import { emitThreadEvent, updateThreadRuntimeState } from "./runtimeEvents";
 import type { ChatStreamEvent } from "./service";
 
 function now(): string {
   return new Date().toISOString();
 }
 
+/**
+ * Builds the streamed server response for one chat turn.
+ *
+ * This is the main orchestration point for provider selection, prompt context
+ * assembly, message persistence, live thread events, and coach topic updates.
+ */
 export function buildSendMessageStream(
   providerService: ProviderServiceShape,
   threadId: string,
@@ -88,7 +94,7 @@ export function buildSendMessageStream(
     const [resumeText, profile, topics] = await Promise.all([
       getResumeText(projectId),
       getProfile(projectId),
-      getTopicsWithContent(projectId),
+      loadTopicsWithContent(projectId),
     ]);
 
     const systemPrompt = buildSystemPrompt({ resumeText, profile, topics });
@@ -251,7 +257,7 @@ export function buildSendMessageStream(
       });
 
       if (threadScope === "explorer") {
-        await touchRuntime(threadId, session.provider, {
+        await updateThreadRuntimeState(threadId, session.provider, {
           projectId,
           scope: threadScope,
           model: model.slug,

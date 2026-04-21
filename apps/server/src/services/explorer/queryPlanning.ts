@@ -33,10 +33,15 @@ const LOCATION_HINT_TOKENS = new Set([
   "nt",
 ]);
 
-export function getRunnableDomains(domains: ExplorerDomainConfig[]): ExplorerDomainConfig[] {
+/** Returns only domains that are currently enabled in explorer config. */
+export function getEnabledDomains(domains: ExplorerDomainConfig[]): ExplorerDomainConfig[] {
   return domains.filter((domain) => domain.enabled);
 }
 
+/**
+ * Filters out search terms that are too vague to be useful in a site's keyword
+ * field, such as bare locations or work-arrangement tokens.
+ */
 function isLowSignalQuery(raw: string): boolean {
   const value = raw.trim().toLowerCase();
   if (!value) return true;
@@ -54,6 +59,12 @@ function isLowSignalQuery(raw: string): boolean {
   return allLocation;
 }
 
+/**
+ * Chooses the concrete search queries to run for a domain.
+ *
+ * Explicit domain queries win. If none are configured, the function derives a
+ * bounded set of role/location/keyword queries from the structured profile.
+ */
 export function getQueriesForDomain(
   domain: ExplorerDomainConfig,
   profile: StructuredProfile | null,

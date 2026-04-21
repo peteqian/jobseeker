@@ -6,7 +6,7 @@ import { db } from "../db";
 import { documents, profiles, projects } from "../db/schema";
 import { createProject, ensureProjectSlugs } from "../services/projects/bootstrap";
 import { writeProfileFile } from "../services/projects/profile";
-import { isDefined, readProjectSnapshot } from "../services/projects/snapshot";
+import { buildProjectSnapshot, isDefined } from "../services/projects/snapshot";
 
 const now = () => new Date().toISOString();
 
@@ -15,7 +15,7 @@ export function registerProjectRoutes(app: Hono) {
     await ensureProjectSlugs();
     const projectRows = await db.select().from(projects).orderBy(desc(projects.updatedAt)).all();
     const snapshots = await Promise.all(
-      projectRows.map((project) => readProjectSnapshot(project.id)),
+      projectRows.map((project) => buildProjectSnapshot(project.id)),
     );
 
     return c.json({ projects: snapshots.filter(isDefined) });
@@ -25,7 +25,7 @@ export function registerProjectRoutes(app: Hono) {
     const input = (await c.req.json()) as { title: string };
     const { projectId } = await createProject(input.title);
 
-    const snapshot = await readProjectSnapshot(projectId);
+    const snapshot = await buildProjectSnapshot(projectId);
     if (!snapshot) {
       return c.json({ error: "Project not found." }, 404);
     }
@@ -37,7 +37,7 @@ export function registerProjectRoutes(app: Hono) {
     await ensureProjectSlugs();
     const projectId = c.req.param("projectId");
 
-    const snapshot = await readProjectSnapshot(projectId);
+    const snapshot = await buildProjectSnapshot(projectId);
     if (!snapshot) {
       return c.json({ error: "Project not found." }, 404);
     }
@@ -93,7 +93,7 @@ export function registerProjectRoutes(app: Hono) {
 
     await writeProfileFile(projectId, profileData);
 
-    const snapshot = await readProjectSnapshot(projectId);
+    const snapshot = await buildProjectSnapshot(projectId);
     if (!snapshot) {
       return c.json({ error: "Project not found." }, 404);
     }

@@ -9,6 +9,12 @@ function now(): string {
   return new Date().toISOString();
 }
 
+/**
+ * Backfills missing project slugs without rewriting rows that already have a
+ * stable slug.
+ *
+ * This is mainly a migration-safety helper for older local data.
+ */
 export async function ensureProjectSlugs(): Promise<void> {
   const rows = await db.select().from(projects).orderBy(asc(projects.createdAt)).all();
   const used = new Set<string>();
@@ -26,6 +32,10 @@ export async function ensureProjectSlugs(): Promise<void> {
   }
 }
 
+/**
+ * Creates a new project and all of the supporting records/directories expected
+ * by the rest of the server.
+ */
 export async function createProject(title: string) {
   const timestamp = now();
   const projectId = makeId("project");

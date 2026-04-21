@@ -11,7 +11,13 @@ function now(): string {
   return new Date().toISOString();
 }
 
-export async function touchRuntime(
+/**
+ * Updates the last-known runtime state for a chat thread/provider pair.
+ *
+ * Explorer threads use this as a lightweight "what is currently attached to
+ * this thread" record separate from the full thread event log.
+ */
+export async function updateThreadRuntimeState(
   threadId: string,
   providerName: ProviderId,
   payload: Record<string, unknown>,
@@ -38,6 +44,7 @@ export async function touchRuntime(
     });
 }
 
+/** Writes a thread-scoped runtime event into the shared project event log. */
 export async function writeThreadRuntimeEvent(
   projectId: string,
   type: RuntimeEventType,
@@ -46,6 +53,10 @@ export async function writeThreadRuntimeEvent(
   await writeProjectRuntimeEvent(projectId, type, payload);
 }
 
+/**
+ * Appends a thread event to durable storage and immediately publishes it to
+ * in-memory subscribers.
+ */
 export async function emitThreadEvent(
   projectId: string,
   threadId: string,

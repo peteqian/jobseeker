@@ -18,15 +18,18 @@ function now(): string {
   return new Date().toISOString();
 }
 
+/** Reuses the shared project resume lookup from the chat context layer. */
 export async function getResumeText(projectId: string): Promise<string | null> {
   return getProjectResumeText(projectId);
 }
 
+/** Reuses the shared project profile lookup from the chat context layer. */
 export async function getProfile(projectId: string) {
   return readProjectProfile(projectId);
 }
 
-export async function getTopicsWithContent(projectId: string): Promise<TopicFile[]> {
+/** Loads all topic files and their current markdown content for prompt building. */
+export async function loadTopicsWithContent(projectId: string): Promise<TopicFile[]> {
   const rows = await db.select().from(topicFiles).where(eq(topicFiles.projectId, projectId)).all();
   const results: TopicFile[] = [];
 
@@ -47,6 +50,7 @@ export async function getTopicsWithContent(projectId: string): Promise<TopicFile
   return results;
 }
 
+/** Maps a topic DB row into the API contract shape without loading file content. */
 export function toTopicMeta(row: {
   id: string;
   projectId: string;
@@ -67,6 +71,7 @@ export function toTopicMeta(row: {
   };
 }
 
+/** Maps a chat-thread DB row into the API contract shape. */
 export function toThread(row: typeof chatThreads.$inferSelect): ChatThread {
   return {
     id: row.id,
@@ -83,7 +88,8 @@ function threadDefaultTitle(scope: ChatScope): string {
   return scope === "coach" ? "Coach" : "Explorer";
 }
 
-export async function ensureDefaultThread(
+/** Ensures every project/scope pair has a default active thread. */
+export async function getOrCreateDefaultThread(
   projectId: string,
   scope: ChatScope,
 ): Promise<ChatThread> {
@@ -121,6 +127,7 @@ export async function ensureDefaultThread(
   };
 }
 
+/** Looks up a thread row and fails fast when the caller references a bad id. */
 export async function getThread(threadId: string): Promise<typeof chatThreads.$inferSelect> {
   const thread = await db.select().from(chatThreads).where(eq(chatThreads.id, threadId)).get();
   if (!thread) {
@@ -129,6 +136,7 @@ export async function getThread(threadId: string): Promise<typeof chatThreads.$i
   return thread;
 }
 
+/** Returns persisted chat messages in chronological order for one thread. */
 export async function getThreadMessages(threadId: string): Promise<ChatMessage[]> {
   const thread = await getThread(threadId);
   const rows = await db

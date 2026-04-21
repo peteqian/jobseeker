@@ -3,12 +3,13 @@ import { desc, eq } from "drizzle-orm";
 
 import { makeId } from "../lib/ids";
 import { extractResumeText, getExtractedName } from "../services/resume";
-import { readProjectSnapshot } from "../services/projects/snapshot";
+import { buildProjectSnapshot } from "../services/projects/snapshot";
 import { db } from "../db";
 import { documents, projects } from "../db/schema";
 
 const now = () => new Date().toISOString();
 
+/** Saves the extracted-text companion document for an uploaded resume version. */
 async function saveExtractedResume(
   projectId: string,
   name: string,
@@ -152,7 +153,7 @@ export function registerResumeRoutes(app: Hono) {
       .set({ activeResumeSourceId: documentId })
       .where(eq(projects.id, projectId));
 
-    const snapshot = await readProjectSnapshot(projectId);
+    const snapshot = await buildProjectSnapshot(projectId);
     if (!snapshot) {
       return c.json({ error: "Project not found." }, 404);
     }
@@ -211,7 +212,7 @@ export function registerResumeRoutes(app: Hono) {
       .set({ activeResumeSourceId: nextActiveResumeSourceId })
       .where(eq(projects.id, projectId));
 
-    const snapshot = await readProjectSnapshot(projectId);
+    const snapshot = await buildProjectSnapshot(projectId);
     if (!snapshot) {
       return c.json({ error: "Project not found." }, 404);
     }

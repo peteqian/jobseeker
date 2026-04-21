@@ -11,6 +11,11 @@ import { questionCardPath, writeQuestionCardFile } from "../questions";
 import { readProjectProfile, upsertProjectProfile, writeProfileFile } from "../projects/profile";
 import { getProjectResumeText } from "../projects/resume";
 
+/**
+ * Rebuilds the project's structured profile from the latest resume text and any
+ * recorded clarification answers, then persists both the DB row and the checked
+ * in `profile.json` mirror used by local tooling.
+ */
 export async function buildAndSaveProfile(
   projectId: string,
   modelSelection?: ChatModelSelection,
@@ -38,7 +43,14 @@ export async function buildAndSaveProfile(
   await writeProfileFile(projectId, profile);
 }
 
-export async function ensureQuestionCards(
+/**
+ * Seeds generated question cards for resume ingest only when the project does
+ * not already have them.
+ *
+ * The function is intentionally idempotent so rerunning resume ingest does not
+ * overwrite user-edited card files.
+ */
+export async function createQuestionCardsIfMissing(
   projectId: string,
   taskId: string,
   timestamp: string,

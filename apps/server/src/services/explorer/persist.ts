@@ -15,10 +15,11 @@ export interface PersistResult {
   gaps: string[];
 }
 
-// Drop explorer jobs from prior runs once a new run has produced at least one row.
-// Only deletes rows created before `cutoffIso`, so a failed/crashed run that produced
-// nothing leaves the last successful result set in place.
-export async function sweepStaleExplorerJobs(projectId: string, cutoffIso: string): Promise<void> {
+/**
+ * Deletes stale explorer jobs from prior runs only after the current run has
+ * produced replacement rows.
+ */
+export async function deleteOldExplorerJobs(projectId: string, cutoffIso: string): Promise<void> {
   const stale = await db
     .select({ id: jobs.id })
     .from(jobs)
@@ -46,7 +47,11 @@ export async function sweepStaleExplorerJobs(projectId: string, cutoffIso: strin
     );
 }
 
-export async function persistJobIncrementally(input: {
+/**
+ * Inserts one discovered explorer job, deduplicates by normalized URL, and
+ * writes its current match score/reasons against the project's profile.
+ */
+export async function saveDiscoveredJob(input: {
   projectId: string;
   profile: StructuredProfile | null;
   job: FoundJob;
@@ -139,6 +144,7 @@ export async function persistJobIncrementally(input: {
   };
 }
 
+/** Normalizes only absolute URLs; relative or malformed URLs are discarded. */
 function normalizeAbsoluteUrl(input: string): string | null {
   const value = input.trim();
   if (!value) return null;
@@ -159,6 +165,10 @@ interface ScoreComponents {
   avoidIndustryHit: boolean;
 }
 
+/**
+ * Produces a lightweight match score used to sort explorer results for a given
+ * project profile.
+ */
 function calculateScore(
   job: FoundJob,
   profile: StructuredProfile,

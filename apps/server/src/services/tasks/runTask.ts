@@ -2,7 +2,7 @@ import type { ChatModelSelection, StartTaskInput } from "@jobseeker/contracts";
 
 import { runExplorerDiscovery } from "../explorer";
 import { writeProjectRuntimeEvent } from "../runtimeEvents";
-import { buildAndSaveProfile, ensureQuestionCards } from "./resumeIngest";
+import { buildAndSaveProfile, createQuestionCardsIfMissing } from "./resumeIngest";
 
 export interface TaskRunResult {
   jobsCreated?: number;
@@ -10,6 +10,13 @@ export interface TaskRunResult {
   queriesRun?: number;
 }
 
+/**
+ * Dispatches a persisted task row to the implementation that actually performs
+ * the work.
+ *
+ * Route handlers own task lifecycle bookkeeping; this module owns the task-type
+ * specific side effects.
+ */
 export async function runTask(
   input: StartTaskInput,
   taskId: string,
@@ -34,7 +41,7 @@ async function runResumeIngestTask(
   modelSelection?: ChatModelSelection,
 ): Promise<void> {
   await buildAndSaveProfile(projectId, modelSelection);
-  await ensureQuestionCards(projectId, taskId, timestamp);
+  await createQuestionCardsIfMissing(projectId, taskId, timestamp);
 }
 
 async function runExplorerDiscoveryTask(

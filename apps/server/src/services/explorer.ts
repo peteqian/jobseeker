@@ -13,12 +13,8 @@ import { logInfo, logWarn } from "../lib/log";
 import { createProjectSlug } from "../lib/paths";
 import { getProviderSettings } from "../lib/provider-settings";
 import { readExplorerConfig, readExplorerProfile } from "./explorer/config";
-import { persistJobIncrementally, sweepStaleExplorerJobs } from "./explorer/persist";
-import {
-  getQueriesForDomain,
-  getRunnableDomains,
-  type QuerySource,
-} from "./explorer/queryPlanning";
+import { deleteOldExplorerJobs, saveDiscoveredJob } from "./explorer/persist";
+import { getEnabledDomains, getQueriesForDomain, type QuerySource } from "./explorer/queryPlanning";
 import { findJobsForQuery, isAbortLikeError } from "./explorer/runtime";
 import type { ExplorerRunOptions } from "./explorer/types";
 
@@ -41,6 +37,14 @@ function resolveExplorerModelSelection(selection?: ExplorerRunOptions["modelSele
   };
 }
 
+/**
+ * Runs the explorer discovery workflow for one project.
+ *
+ * This entrypoint loads explorer config/profile state, derives the concrete
+ * `(domain, query)` runs to execute, processes them with bounded concurrency,
+ * persists job matches incrementally, and only retires stale explorer rows once
+ * the new run has produced at least one replacement result.
+ */
 export async function runExplorerDiscovery(projectId: string): Promise<{
   jobsCreated: number;
   domainsProcessed: number;
@@ -77,7 +81,7 @@ export async function runExplorerDiscovery(
   }
   const projectSlug = project.slug ?? createProjectSlug(project.title, project.id);
   const agent = resolveExplorerModelSelection(options?.modelSelection);
-  const domains = getRunnableDomains(config.domains);
+  const domains = getEnabledDomains(config.domains);
   if (domains.length === 0) {
     return { jobsCreated: 0, domainsProcessed: 0, queriesRun: 0 };
   }
@@ -168,7 +172,7 @@ export async function runExplorerDiscovery(
 
     const persistFound = async (job: FoundJob) => {
       if (controller.signal.aborted) return;
-      const result = await persistJobIncrementally({ projectId, profile, job, seenUrls });
+      const result = await saveDiscoveredJob({ projectId, profile, job, seenUrls });
       if (!result) return;
       pairJobsFound += 1;
       jobsCreated += 1;
@@ -238,7 +242,7 @@ export async function runExplorerDiscovery(
   );
 
   if (jobsCreated > 0) {
-    await sweepStaleExplorerJobs(projectId, runStartedAt);
+    await deleteOldExplorerJobs(projectId, runStartedAt);
   }
 
   return {
@@ -248,6 +252,12 @@ export async function runExplorerDiscovery(
   };
 }
 
+/**
+ * Small fixed-width worker pool used by explorer query execution.
+ *
+ * Explorer only needs bounded fan-out with stable result ordering, so this
+ * local helper stays simpler than introducing a generic queue abstraction.
+ */
 async function runWithConcurrency<T>(tasks: Array<() => Promise<T>>, limit: number): Promise<T[]> {
   const results: T[] = new Array(tasks.length);
   let cursor = 0;

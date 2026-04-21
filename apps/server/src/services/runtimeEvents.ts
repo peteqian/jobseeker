@@ -8,6 +8,9 @@ function now(): string {
   return new Date().toISOString();
 }
 
+/**
+ * Persists a project-scoped runtime event for polling and replay by clients.
+ */
 export async function writeProjectRuntimeEvent(
   projectId: string,
   type: RuntimeEventType,

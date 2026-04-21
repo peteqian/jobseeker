@@ -36,7 +36,9 @@ function parseTrajectory(trajectoryJson: string, extractorJson: string): Distill
 // Lookup by LANDING-page fingerprint. Agents save memory keyed on the landing DOM,
 // not the results DOM, so callers must pass the fingerprint computed immediately
 // after `page.goto(startUrl)` (before any agent/replay mutation).
-export async function lookupPageMemory(fingerprint: string): Promise<PageMemoryRecord | null> {
+export async function findReusablePageMemory(
+  fingerprint: string,
+): Promise<PageMemoryRecord | null> {
   const row = await db
     .select()
     .from(pageMemory)
@@ -62,8 +64,12 @@ export async function lookupPageMemory(fingerprint: string): Promise<PageMemoryR
   };
 }
 
-// Called after a fresh-session replay validated the trajectory extracts jobs. Starts
-// at `untrusted` with one success — a second success promotes to `trusted`.
+/**
+ * Stores a newly validated landing-page replay recipe.
+ *
+ * New rows start as `untrusted`; a later successful replay promotes them to
+ * `trusted`.
+ */
 export async function savePageMemory(input: {
   fingerprint: string;
   urlPattern: string | null;
@@ -90,7 +96,8 @@ export async function savePageMemory(input: {
   return id;
 }
 
-export async function markPageMemorySuccess(id: string, sampleJobs?: unknown): Promise<void> {
+/** Records a successful replay and promotes the memory row when warranted. */
+export async function recordPageMemorySuccess(id: string, sampleJobs?: unknown): Promise<void> {
   const now = new Date().toISOString();
   const row = await db.select().from(pageMemory).where(eq(pageMemory.id, id)).get();
   if (!row) return;
@@ -112,9 +119,11 @@ export async function markPageMemorySuccess(id: string, sampleJobs?: unknown): P
     .where(eq(pageMemory.id, id));
 }
 
-// Returns the new status the row settled into (useful for callers deciding whether
-// to retry with agent discovery or skip).
-export async function markPageMemoryFailure(id: string): Promise<PageMemoryStatus | "deleted"> {
+/**
+ * Records a failed replay and returns the resulting memory status so callers can
+ * decide whether to retry with a full agent run.
+ */
+export async function recordPageMemoryFailure(id: string): Promise<PageMemoryStatus | "deleted"> {
   const row = await db.select().from(pageMemory).where(eq(pageMemory.id, id)).get();
   if (!row) return "deleted";
   const nextConsecutive = row.consecutiveFailures + 1;

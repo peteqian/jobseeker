@@ -35,7 +35,16 @@ import { createProjectSlug } from "../../lib/paths";
 import { createEmptyQuestionCardSections, readQuestionCardFile } from "../questions";
 import { defaultExplorerConfig, mapExplorerConfigRow } from "./explorerConfig";
 
-export async function readProjectSnapshot(projectId: string): Promise<ProjectSnapshot | undefined> {
+/**
+ * Materializes the server's aggregate "project view" read model.
+ *
+ * Route handlers use this snapshot so clients can re-fetch a consistent view of
+ * documents, tasks, chat state, explorer results, and profile-derived data
+ * after any project mutation.
+ */
+export async function buildProjectSnapshot(
+  projectId: string,
+): Promise<ProjectSnapshot | undefined> {
   const project = await db.select().from(projects).where(eq(projects.id, projectId)).get();
 
   if (!project) {
