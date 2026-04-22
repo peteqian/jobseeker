@@ -27,38 +27,55 @@ export class CaptchaWatchdog {
   private captchaResult: CaptchaResult = "unknown";
   private captchaDurationMs = 0;
   private waiters = new Set<() => void>();
+  private unsubscribers: Array<() => void> = [];
 
   attach(client: CDPClient): void {
-    client.on("BrowserUse.captchaSolverStarted", (params) => {
-      const event = (params ?? {}) as CaptchaStartedEvent;
-      this.captchaSolving = true;
-      this.captchaInfo = {
-        vendor: event.vendor ?? "unknown",
-        url: event.url ?? "",
-      };
-      this.captchaResult = "unknown";
-      this.captchaDurationMs = 0;
-    });
+    this.unsubscribers.push(
+      client.on("BrowserUse.captchaSolverStarted", (params) => {
+        const event = (params ?? {}) as CaptchaStartedEvent;
+        this.captchaSolving = true;
+        this.captchaInfo = {
+          vendor: event.vendor ?? "unknown",
+          url: event.url ?? "",
+        };
+        this.captchaResult = "unknown";
+        this.captchaDurationMs = 0;
+      }),
+    );
 
-    client.on("BrowserUse.captchaSolverFinished", (params) => {
-      const event = (params ?? {}) as CaptchaFinishedEvent;
-      this.captchaSolving = false;
-      this.captchaInfo = {
-        vendor: event.vendor ?? this.captchaInfo.vendor,
-        url: event.url ?? this.captchaInfo.url,
-      };
-      this.captchaResult =
-        event.success === true ? "success" : event.success === false ? "failed" : "unknown";
-      this.captchaDurationMs = event.durationMs ?? 0;
-      for (const wake of this.waiters) wake();
-      this.waiters.clear();
-    });
+    this.unsubscribers.push(
+      client.on("BrowserUse.captchaSolverFinished", (params) => {
+        const event = (params ?? {}) as CaptchaFinishedEvent;
+        this.captchaSolving = false;
+        this.captchaInfo = {
+          vendor: event.vendor ?? this.captchaInfo.vendor,
+          url: event.url ?? this.captchaInfo.url,
+        };
+        this.captchaResult =
+          event.success === true ? "success" : event.success === false ? "failed" : "unknown";
+        this.captchaDurationMs = event.durationMs ?? 0;
+        for (const wake of this.waiters) wake();
+        this.waiters.clear();
+      }),
+    );
 
-    client.onClose(() => {
-      this.captchaSolving = false;
-      for (const wake of this.waiters) wake();
-      this.waiters.clear();
-    });
+    this.unsubscribers.push(
+      client.onClose(() => {
+        this.captchaSolving = false;
+        for (const wake of this.waiters) wake();
+        this.waiters.clear();
+      }),
+    );
+  }
+
+  detach(): void {
+    for (const unsub of this.unsubscribers) {
+      unsub();
+    }
+    this.unsubscribers = [];
+    this.captchaSolving = false;
+    for (const wake of this.waiters) wake();
+    this.waiters.clear();
   }
 
   async waitIfSolving(timeoutMs = 30_000): Promise<CaptchaWaitResult | null> {

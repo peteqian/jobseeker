@@ -232,17 +232,25 @@ function runCommand(command: string, args: string[], timeoutMs: number): Promise
       stderr += chunk.toString();
     });
 
+    let settled = false;
+
     const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
       child.kill("SIGKILL");
       reject(new Error(`Timed out running ${command} ${args.join(" ")}`));
     }, timeoutMs);
 
     child.once("error", (error) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
       reject(error);
     });
 
     child.once("exit", (code) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
       if (code === 0) {
         resolve();

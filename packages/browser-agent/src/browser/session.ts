@@ -312,6 +312,10 @@ export class BrowserSession {
       }
 
       this.setState("disconnected");
+      if (this.browser) {
+        await this.browser.close().catch(() => {});
+        this.browser = null;
+      }
     } finally {
       this.reconnecting = false;
     }
@@ -460,8 +464,11 @@ export class BrowserSession {
       this.browser = null;
     }
 
+    this.captchaWatchdog.detach();
     this.targetToSession.clear();
     this.sessionToTarget.clear();
+    this.pageCache.clear();
+    this.stateListeners.clear();
   }
 
   async kill(): Promise<void> {
@@ -475,8 +482,11 @@ export class BrowserSession {
     }
 
     this.setState("stopped");
+    this.captchaWatchdog.detach();
     this.targetToSession.clear();
     this.sessionToTarget.clear();
+    this.pageCache.clear();
+    this.stateListeners.clear();
   }
 }
 

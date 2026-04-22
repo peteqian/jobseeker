@@ -251,11 +251,15 @@ async function callCodex(request: {
     }, timeoutMs);
   });
 
-  const stdout = await Promise.race([stdoutPromise, timeoutPromise]);
-  const exitCode = await proc.exited;
-  const stderr = await stderrPromise;
-  if (exitCode !== 0) {
-    throw new Error(`Codex exited with code ${exitCode}: ${stderr}`);
+  try {
+    const stdout = await Promise.race([stdoutPromise, timeoutPromise]);
+    const exitCode = await proc.exited;
+    const stderr = await stderrPromise;
+    if (exitCode !== 0) {
+      throw new Error(`Codex exited with code ${exitCode}: ${stderr}`);
+    }
+    return stdout;
+  } finally {
+    // timeoutPromise is fire-and-forget; no explicit cleanup needed
   }
-  return stdout;
 }

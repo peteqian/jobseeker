@@ -111,22 +111,27 @@ async function tryCodex(
       }, timeoutMs);
     });
 
-    const stdout = await Promise.race([stdoutPromise, timeoutPromise]);
-    const exitCode = await proc.exited;
-    const stderr = await stderrPromise;
+    try {
+      const stdout = await Promise.race([stdoutPromise, timeoutPromise]);
+      const exitCode = await proc.exited;
+      const stderr = await stderrPromise;
 
-    if (exitCode !== 0) {
-      console.error(`Profile build: codex exited with code ${exitCode}`, stderr);
+      if (exitCode !== 0) {
+        console.error(`Profile build: codex exited with code ${exitCode}`, stderr);
+        return null;
+      }
+
+      const raw = cleanJsonResponse(stdout);
+      if (!raw) {
+        console.warn("Profile build: codex returned empty output");
+        return null;
+      }
+
+      return JSON.parse(raw) as StructuredProfile;
+    } catch (error) {
+      console.error("Profile build via codex failed:", error);
       return null;
     }
-
-    const raw = cleanJsonResponse(stdout);
-    if (!raw) {
-      console.warn("Profile build: codex returned empty output");
-      return null;
-    }
-
-    return JSON.parse(raw) as StructuredProfile;
   } catch (error) {
     console.error("Profile build via codex failed:", error);
     return null;

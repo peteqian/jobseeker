@@ -2,14 +2,10 @@ import type { ChatThread } from "@jobseeker/contracts";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, createFileRoute } from "@tanstack/react-router";
-import { MessageSquarePlus, PanelLeftClose, PanelLeftOpen } from "lucide-react";
-
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { buttonVariants } from "@/components/ui/button-variants";
 import { ChatPanel } from "@/components/chat/chat-panel";
 import { TopicArtifactPanel } from "@/components/chat/topic-artifact-panel";
-
 import { useModelChoice } from "@/hooks/use-model-choice";
 import { appendThreadToCache } from "@/lib/chat-cache";
 import {
@@ -24,6 +20,8 @@ import { useChat } from "@/hooks/use-chat";
 import { useShellHeaderMeta } from "@/providers/shell-header-context";
 import { useProject } from "@/providers/project-context";
 import { createThread } from "@/rpc/chat-client";
+import { ResumeBanner } from "./projects.$projectId.coach/-resume-banner";
+import { SessionSidebar } from "./projects.$projectId.coach/-session-sidebar";
 
 const EMPTY_THREADS: ChatThread[] = [];
 
@@ -123,75 +121,18 @@ function ChatPage() {
 
   return (
     <div className="flex h-full min-h-0 gap-3 overflow-hidden">
-      {showSessions ? (
-        <aside className="flex w-72 shrink-0 flex-col overflow-hidden rounded-lg border bg-card shadow-sm">
-          <div className="flex items-center justify-between border-b px-4 py-3">
-            <div>
-              <p className="text-sm font-medium">Sessions</p>
-              <p className="text-xs text-muted-foreground">Coach threads for this project</p>
-            </div>
-            <div className="flex items-center gap-1">
-              <Button size="icon" variant="ghost" onClick={() => void handleCreateThread()}>
-                <MessageSquarePlus className="size-4" />
-              </Button>
-              <Button size="icon" variant="ghost" onClick={() => setShowSessions(false)}>
-                <PanelLeftClose className="size-4" />
-              </Button>
-            </div>
-          </div>
-          <div className="flex-1 space-y-2 overflow-y-auto p-3">
-            {threads.map((thread) => (
-              <button
-                key={thread.id}
-                type="button"
-                onClick={() => setActiveThreadId(thread.id)}
-                className={`w-full rounded-md border px-3 py-2 text-left transition-colors ${
-                  thread.id === activeThreadId
-                    ? "border-primary/50 bg-primary/10"
-                    : "border-border bg-background hover:bg-muted"
-                }`}
-              >
-                <p className="truncate text-sm font-medium text-foreground">{thread.title}</p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {new Date(thread.updatedAt).toLocaleString()}
-                </p>
-              </button>
-            ))}
-          </div>
-        </aside>
-      ) : (
-        <aside className="flex w-12 shrink-0 flex-col items-center gap-2 rounded-lg border bg-card px-2 py-3 shadow-sm">
-          <Button size="icon" variant="ghost" onClick={() => setShowSessions(true)}>
-            <PanelLeftOpen className="size-4" />
-          </Button>
-          <Button size="icon" variant="ghost" onClick={() => void handleCreateThread()}>
-            <MessageSquarePlus className="size-4" />
-          </Button>
-        </aside>
-      )}
+      <SessionSidebar
+        threads={threads}
+        activeThreadId={activeThreadId}
+        onSelectThread={setActiveThreadId}
+        onCreateThread={() => void handleCreateThread()}
+        onToggleVisibility={() => setShowSessions((prev) => !prev)}
+        expanded={showSessions}
+      />
 
       {/* Chat area */}
       <div className="flex min-w-0 flex-1 flex-col">
-        <div className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-card px-4 py-3 shadow-sm">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <Badge variant="default">Active resume</Badge>
-              <p className="truncate text-sm font-medium text-foreground">{resumeDoc.name}</p>
-            </div>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Chat responses are grounded against this resume version.
-              {activeThread ? ` Thread: ${activeThread.title}` : ""}
-            </p>
-          </div>
-
-          <Link
-            to="/projects/$projectId/resume"
-            params={{ projectId: projectSlug }}
-            className={buttonVariants({ variant: "outline", size: "sm" })}
-          >
-            Manage resumes
-          </Link>
-        </div>
+        <ResumeBanner resumeDoc={resumeDoc} activeThread={activeThread} projectSlug={projectSlug} />
 
         <ChatPanel
           messages={messages}

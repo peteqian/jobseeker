@@ -804,6 +804,56 @@ function WorkHistorySection({ form }: { form: ProfileForm }) {
   );
 }
 
+function CommaSeparatedInput({
+  id,
+  name,
+  value,
+  onChange,
+  onBlur,
+  placeholder,
+}: {
+  id: string;
+  name: string;
+  value: string[];
+  onChange: (value: string[]) => void;
+  onBlur?: () => void;
+  placeholder?: string;
+}) {
+  const [draft, setDraft] = useState(() => value.join(", "));
+
+  useEffect(() => {
+    setDraft(value.join(", "));
+  }, [value]);
+
+  const commit = () => {
+    const next = draft
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+    onChange(next);
+  };
+
+  return (
+    <Input
+      id={id}
+      name={name}
+      value={draft}
+      onBlur={() => {
+        commit();
+        onBlur?.();
+      }}
+      onChange={(event) => setDraft(event.target.value)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          commit();
+        }
+      }}
+      placeholder={placeholder}
+    />
+  );
+}
+
 function CompanyPreferencesSection({ form }: { form: ProfileForm }) {
   return (
     <Card>
@@ -878,19 +928,12 @@ function CompanyPreferencesSection({ form }: { form: ProfileForm }) {
             {(field) => (
               <div className="space-y-2 sm:col-span-2">
                 <Label htmlFor={field.name}>Industries (comma separated)</Label>
-                <Input
+                <CommaSeparatedInput
                   id={field.name}
                   name={field.name}
-                  value={field.state.value.join(", ")}
+                  value={field.state.value}
+                  onChange={field.handleChange}
                   onBlur={field.handleBlur}
-                  onChange={(event) =>
-                    field.handleChange(
-                      event.target.value
-                        .split(",")
-                        .map((item) => item.trim())
-                        .filter(Boolean),
-                    )
-                  }
                   placeholder="FinTech, SaaS, HealthTech"
                 />
               </div>
@@ -901,19 +944,12 @@ function CompanyPreferencesSection({ form }: { form: ProfileForm }) {
             {(field) => (
               <div className="space-y-2 sm:col-span-2">
                 <Label htmlFor={field.name}>Industries to avoid (comma separated)</Label>
-                <Input
+                <CommaSeparatedInput
                   id={field.name}
                   name={field.name}
-                  value={field.state.value.join(", ")}
+                  value={field.state.value}
+                  onChange={field.handleChange}
                   onBlur={field.handleBlur}
-                  onChange={(event) =>
-                    field.handleChange(
-                      event.target.value
-                        .split(",")
-                        .map((item) => item.trim())
-                        .filter(Boolean),
-                    )
-                  }
                   placeholder="Gambling, Oil & Gas"
                 />
               </div>

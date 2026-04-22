@@ -166,5 +166,7 @@ export class CDPClient {
     this.expectedClose = true;
     this.closed = true;
     this.ws.close();
+    this.eventHandlers.clear();
+    this.closeHandlers.clear();
   }
 }
