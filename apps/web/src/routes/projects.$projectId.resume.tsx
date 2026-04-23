@@ -3,9 +3,14 @@ import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 
 import { resumeVersionsQueryOptions } from "@/lib/query-options";
-import { useJobseeker } from "@/providers/jobseeker-hooks";
 import { useShellHeaderMeta } from "@/providers/shell-header-context";
-import { useProject } from "@/providers/project-context";
+import { useProjectStore } from "@/stores/project-store";
+import {
+  useUploadResume,
+  usePasteResume,
+  useSwitchActiveResume,
+  useDeleteResume,
+} from "@/hooks/use-project-mutations";
 import type { ResumeVersion } from "@jobseeker/contracts";
 
 import { AddResumeDialog } from "./projects.$projectId.resume/-add-resume-dialog";
@@ -24,9 +29,11 @@ function clamp(value: number, min: number, max: number) {
 }
 
 function ResumePage() {
-  const { project } = useProject();
-  const { busyAction, uploadResume, pasteResume, switchActiveResume, deleteResume } =
-    useJobseeker();
+  const project = useProjectStore((state) => state.currentProject);
+  const uploadResume = useUploadResume();
+  const pasteResume = usePasteResume();
+  const switchActiveResume = useSwitchActiveResume();
+  const deleteResume = useDeleteResume();
 
   const layoutRef = useRef<HTMLDivElement | null>(null);
 
@@ -37,8 +44,18 @@ function ResumePage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [leftWidth, setLeftWidth] = useState(360);
   const [isResizing, setIsResizing] = useState(false);
-  const versionsQuery = useQuery(resumeVersionsQueryOptions(project.project.id));
+
+  const versionsQuery = useQuery(
+    project
+      ? resumeVersionsQueryOptions(project.project.id)
+      : {
+          queryKey: ["resume-versions", "none"],
+          queryFn: () => [] as ResumeVersion[],
+          enabled: false,
+        },
+  );
   const versions = versionsQuery.data ?? EMPTY_RESUME_VERSIONS;
+
   const shellHeader = useMemo(
     () => ({
       title: "Your resume",
@@ -50,51 +67,11 @@ function ResumePage() {
   useShellHeaderMeta(shellHeader);
 
   const isBusy =
-    busyAction === "upload-resume" ||
-    busyAction === "paste-resume" ||
-    busyAction === "switch-resume" ||
-    busyAction === "delete-resume";
+    uploadResume.isPending ||
+    pasteResume.isPending ||
+    switchActiveResume.isPending ||
+    deleteResume.isPending;
   const canSubmit = dialogMode === "paste" ? resumeText.trim().length > 0 : Boolean(resumeFile);
-
-  function resetDialog() {
-    setResumeText("");
-    setResumeFile(null);
-    setDialogMode("paste");
-  }
-
-  async function handleDialogSubmit() {
-    if (dialogMode === "upload") {
-      if (!resumeFile) {
-        return;
-      }
-
-      await uploadResume(project.project.id, resumeFile);
-    } else {
-      if (!resumeText.trim()) {
-        return;
-      }
-
-      await pasteResume(project.project.id, {
-        text: resumeText,
-        name: `${project.project.title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-resume.md`,
-      });
-    }
-
-    const nextVersions = await refreshVersions();
-    const nextActive = nextVersions.find((version) => version.isActive) ?? nextVersions[0] ?? null;
-
-    setSelectedId(nextActive?.document.id ?? null);
-    resetDialog();
-    setDialogOpen(false);
-  }
-
-  function handleDialogOpenChange(nextOpen: boolean) {
-    setDialogOpen(nextOpen);
-
-    if (!nextOpen) {
-      resetDialog();
-    }
-  }
 
   useEffect(() => {
     if (!versions.length) {
@@ -143,6 +120,57 @@ function ResumePage() {
     };
   }, [isResizing]);
 
+  if (!project) {
+    return (
+      <div className="rounded-lg bg-muted/30 p-6 text-sm text-muted-foreground">
+        Project not found.
+      </div>
+    );
+  }
+
+  function resetDialog() {
+    setResumeText("");
+    setResumeFile(null);
+    setDialogMode("paste");
+  }
+
+  async function handleDialogSubmit() {
+    if (dialogMode === "upload") {
+      if (!resumeFile) {
+        return;
+      }
+
+      await uploadResume.mutateAsync({ projectId: project.project.id, file: resumeFile });
+    } else {
+      if (!resumeText.trim()) {
+        return;
+      }
+
+      await pasteResume.mutateAsync({
+        projectId: project.project.id,
+        input: {
+          text: resumeText,
+          name: `${project.project.title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-resume.md`,
+        },
+      });
+    }
+
+    const nextVersions = await refreshVersions();
+    const nextActive = nextVersions.find((version) => version.isActive) ?? nextVersions[0] ?? null;
+
+    setSelectedId(nextActive?.document.id ?? null);
+    resetDialog();
+    setDialogOpen(false);
+  }
+
+  function handleDialogOpenChange(nextOpen: boolean) {
+    setDialogOpen(nextOpen);
+
+    if (!nextOpen) {
+      resetDialog();
+    }
+  }
+
   const activeVersion = versions.find((version) => version.isActive) ?? null;
   const selectedVersion =
     versions.find((version) => version.document.id === selectedId) ?? activeVersion ?? null;
@@ -158,7 +186,10 @@ function ResumePage() {
       return;
     }
 
-    await switchActiveResume(project.project.id, version.document.id);
+    await switchActiveResume.mutateAsync({
+      projectId: project.project.id,
+      documentId: version.document.id,
+    });
     const nextVersions = await refreshVersions();
     const nextActive =
       nextVersions.find((item) => item.document.id === version.document.id) ??
@@ -169,7 +200,10 @@ function ResumePage() {
   }
 
   async function handleDelete(version: ResumeVersion) {
-    await deleteResume(project.project.id, version.document.id);
+    await deleteResume.mutateAsync({
+      projectId: project.project.id,
+      documentId: version.document.id,
+    });
     const nextVersions = await refreshVersions();
     const nextSelected =
       nextVersions.find(

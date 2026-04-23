@@ -7,11 +7,11 @@ import { buttonVariants } from "@/components/ui/button-variants";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 import { useModelChoice } from "@/hooks/use-model-choice";
+import { useStartTask } from "@/hooks/use-project-mutations";
 import { getResumeDoc } from "@/lib/project";
 import { projectRouteId } from "@/lib/project-route";
-import { useJobseeker } from "@/providers/jobseeker-hooks";
 import { useShellHeaderActions, useShellHeaderMeta } from "@/providers/shell-header-context";
-import { useProject } from "@/providers/project-context";
+import { useProjectStore } from "@/stores/project-store";
 import { ProfileEditor, type ProfileEditorHandle } from "./projects.$projectId.profile/-editor";
 import { ProfileModelSettings } from "./projects.$projectId.profile/-model-settings";
 
@@ -20,34 +20,32 @@ export const Route = createFileRoute("/projects/$projectId/profile")({
 });
 
 function ProfilePage() {
-  const { project } = useProject();
-  const { busyAction, startTask } = useJobseeker();
-  const resumeDoc = getResumeDoc(project);
-  const profile = project.profile;
-  const [currentProfile, setCurrentProfile] = useState(profile);
-  const projectSlug = projectRouteId(project);
-  const isRebuilding = busyAction === "resume-ingest";
+  const project = useProjectStore((state) => state.currentProject);
+  const startTask = useStartTask();
+  const [currentProfile, setCurrentProfile] = useState(project?.profile ?? null);
   const editorRef = useRef<ProfileEditorHandle>(null);
   const [editorDirty, setEditorDirty] = useState(false);
   const [editorSaving, setEditorSaving] = useState(false);
-  const {
-    providers,
-    selection: modelSelection,
-    setSelection: setModelSelection,
-  } = useModelChoice(project.project.id, "profile");
+  const modelChoice = useModelChoice(project?.project.id ?? "", "profile");
+
+  const resumeDoc = project ? getResumeDoc(project) : null;
+  const projectSlug = project ? projectRouteId(project) : "";
+  const isRebuilding = startTask.isPending;
+  const { providers, selection: modelSelection, setSelection: setModelSelection } = modelChoice;
 
   useEffect(() => {
-    setCurrentProfile(profile);
-  }, [profile]);
+    setCurrentProfile(project?.profile ?? null);
+  }, [project?.profile]);
 
-  const rebuild = useCallback(
-    () =>
-      void startTask(
-        { projectId: project.project.id, type: "resume_ingest", modelSelection },
-        "resume-ingest",
-      ),
-    [modelSelection, project.project.id, startTask],
-  );
+  const projectId = project?.project.id;
+  const rebuild = useCallback(() => {
+    if (!projectId) return;
+    void startTask.mutate({
+      projectId,
+      type: "resume_ingest",
+      modelSelection,
+    });
+  }, [modelSelection, projectId, startTask]);
 
   useShellHeaderMeta({
     title: "Profile",
@@ -94,6 +92,14 @@ function ProfilePage() {
   ]);
 
   const shellHeaderActions = useShellHeaderActions(headerActions);
+
+  if (!project) {
+    return (
+      <div className="rounded-lg bg-muted/30 p-6 text-sm text-muted-foreground">
+        Project not found.
+      </div>
+    );
+  }
 
   if (!resumeDoc) {
     return (

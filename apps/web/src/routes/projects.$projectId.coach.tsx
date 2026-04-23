@@ -18,7 +18,7 @@ import { projectRouteId } from "@/lib/project-route";
 import { getResumeDoc } from "@/lib/project";
 import { useChat } from "@/hooks/use-chat";
 import { useShellHeaderMeta } from "@/providers/shell-header-context";
-import { useProject } from "@/providers/project-context";
+import { useProjectStore } from "@/stores/project-store";
 import { createThread } from "@/rpc/chat-client";
 import { ResumeBanner } from "./projects.$projectId.coach/-resume-banner";
 import { SessionSidebar } from "./projects.$projectId.coach/-session-sidebar";
@@ -43,11 +43,11 @@ export const Route = createFileRoute("/projects/$projectId/coach")({
 });
 
 function ChatPage() {
-  const { project } = useProject();
+  const project = useProjectStore((state) => state.currentProject);
   const queryClient = useQueryClient();
-  const resumeDoc = getResumeDoc(project);
-  const projectId = project.project.id;
-  const projectSlug = projectRouteId(project);
+  const resumeDoc = project ? getResumeDoc(project) : null;
+  const projectId = project?.project.id ?? "";
+  const projectSlug = project ? projectRouteId(project) : "";
 
   const shellHeader = useMemo(
     () => ({
@@ -86,6 +86,14 @@ function ChatPage() {
     const created = await createThread(projectId, "coach");
     appendThreadToCache(queryClient, projectId, "coach", created);
     setActiveThreadId(created.id);
+  }
+
+  if (!project) {
+    return (
+      <div className="rounded-lg bg-muted/30 p-6 text-sm text-muted-foreground">
+        Project not found.
+      </div>
+    );
   }
 
   // No resume uploaded yet

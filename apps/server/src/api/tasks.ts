@@ -16,8 +16,7 @@ export function registerTaskRoutes(app: Hono) {
     const input = (await c.req.json()) as StartTaskInput;
     const timestamp = now();
     const taskId = makeId("task");
-    let taskStatus: TaskRecord["status"] = "running";
-    let taskError: string | null = null;
+    const taskStatus: TaskRecord["status"] = "running";
 
     await db.insert(tasks).values({
       id: taskId,
@@ -32,6 +31,7 @@ export function registerTaskRoutes(app: Hono) {
     await writeProjectRuntimeEvent(input.projectId, "task.started", {
       taskId,
       taskType: input.type,
+      jobId: input.jobId ?? null,
       status: "running",
     });
 
@@ -41,42 +41,7 @@ export function registerTaskRoutes(app: Hono) {
       type: input.type,
     });
 
-    try {
-      const result = await runTask(input, taskId, timestamp);
-      taskStatus = "completed";
-      await writeProjectRuntimeEvent(input.projectId, "task.completed", {
-        taskId,
-        taskType: input.type,
-      });
-      if (input.type === "explorer_discovery") {
-        await writeProjectRuntimeEvent(input.projectId, "jobs.updated", {
-          taskId,
-          jobsCreated: result.jobsCreated ?? 0,
-          domainsProcessed: result.domainsProcessed ?? 0,
-          queriesRun: result.queriesRun ?? 0,
-        });
-      }
-    } catch (error) {
-      taskStatus = "failed";
-      taskError = error instanceof Error ? error.message : String(error);
-
-      logError("task failed", {
-        taskId,
-        projectId: input.projectId,
-        type: input.type,
-        error,
-      });
-      await writeProjectRuntimeEvent(input.projectId, "task.failed", {
-        taskId,
-        taskType: input.type,
-        error: taskError,
-      });
-    }
-
-    await db
-      .update(tasks)
-      .set({ status: taskStatus, updatedAt: now(), error: taskError })
-      .where(eq(tasks.id, taskId));
+    void executeTask(input, taskId, timestamp);
 
     return c.json(
       {
@@ -84,11 +49,59 @@ export function registerTaskRoutes(app: Hono) {
         projectId: input.projectId,
         type: input.type,
         status: taskStatus,
-        error: taskError,
+        error: null,
         createdAt: timestamp,
-        updatedAt: now(),
+        updatedAt: timestamp,
       },
-      201,
+      202,
     );
   });
+}
+
+async function executeTask(
+  input: StartTaskInput,
+  taskId: string,
+  timestamp: string,
+): Promise<void> {
+  let taskStatus: TaskRecord["status"] = "running";
+  let taskError: string | null = null;
+
+  try {
+    const result = await runTask(input, taskId, timestamp);
+    taskStatus = "completed";
+    await writeProjectRuntimeEvent(input.projectId, "task.completed", {
+      taskId,
+      taskType: input.type,
+      jobId: input.jobId ?? null,
+    });
+    if (input.type === "explorer_discovery") {
+      await writeProjectRuntimeEvent(input.projectId, "jobs.updated", {
+        taskId,
+        jobsCreated: result.jobsCreated ?? 0,
+        domainsProcessed: result.domainsProcessed ?? 0,
+        queriesRun: result.queriesRun ?? 0,
+      });
+    }
+  } catch (error) {
+    taskStatus = "failed";
+    taskError = error instanceof Error ? error.message : String(error);
+
+    logError("task failed", {
+      taskId,
+      projectId: input.projectId,
+      type: input.type,
+      error,
+    });
+    await writeProjectRuntimeEvent(input.projectId, "task.failed", {
+      taskId,
+      taskType: input.type,
+      jobId: input.jobId ?? null,
+      error: taskError,
+    });
+  }
+
+  await db
+    .update(tasks)
+    .set({ status: taskStatus, updatedAt: now(), error: taskError })
+    .where(eq(tasks.id, taskId));
 }

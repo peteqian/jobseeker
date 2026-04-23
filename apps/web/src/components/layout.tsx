@@ -4,7 +4,6 @@ import {
   ChevronLeft,
   Compass,
   Files,
-  FileText,
   LayoutGrid,
   MessageSquare,
   Plus,
@@ -15,6 +14,7 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useForm } from "@tanstack/react-form";
+import { useQuery } from "@tanstack/react-query";
 import { Outlet, useLocation, useNavigate } from "@tanstack/react-router";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -47,7 +47,9 @@ import {
 } from "@/components/ui/sidebar";
 
 import { projectRouteId } from "@/lib/project-route";
-import { useJobseeker } from "@/providers/jobseeker-hooks";
+import { projectsListQueryOptions } from "@/lib/query-options";
+import { useCreateProject } from "@/hooks/use-project-mutations";
+import { useUIStore } from "@/stores/ui-store";
 import {
   ShellHeaderActionsHost,
   ShellHeaderProvider,
@@ -65,7 +67,6 @@ const projectSteps = [
   { segment: "/coach", label: "Coach", icon: MessageSquare },
   { segment: "/profile", label: "Profile", icon: Sparkles },
   { segment: "/explorer", label: "Explorer", icon: Compass },
-  { segment: "/tailoring", label: "Tailoring", icon: FileText },
 ] as const;
 
 export function AppLayout() {
@@ -80,7 +81,10 @@ function AppLayoutInner() {
   const navigate = useNavigate();
   const location = useLocation();
   const { meta: shellHeaderMeta } = useShellHeaderContext();
-  const { projects, error, clearError, createProject, busyAction } = useJobseeker();
+  const { data: projects = [] } = useQuery(projectsListQueryOptions());
+  const createProject = useCreateProject();
+  const error = useUIStore((state) => state.error);
+  const clearError = useUIStore((state) => state.clearError);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const createProjectForm = useForm({
     defaultValues: {
@@ -91,7 +95,7 @@ function AppLayoutInner() {
         return;
       }
 
-      const project = await createProject(value.projectTitle.trim());
+      const project = await createProject.mutateAsync(value.projectTitle.trim());
       createProjectForm.reset();
       setCreateDialogOpen(false);
       await navigate({
@@ -407,9 +411,9 @@ function AppLayoutInner() {
                 {(projectTitle) => (
                   <Button
                     type="submit"
-                    disabled={busyAction === "create-project" || projectTitle.trim().length === 0}
+                    disabled={createProject.isPending || projectTitle.trim().length === 0}
                   >
-                    {busyAction === "create-project" ? "Creating project..." : "Create project"}
+                    {createProject.isPending ? "Creating project..." : "Create project"}
                   </Button>
                 )}
               </createProjectForm.Subscribe>

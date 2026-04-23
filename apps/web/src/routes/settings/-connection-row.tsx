@@ -1,4 +1,4 @@
-import type { ConnectionRowProps } from "./settings/settings.types";
+import type { ConnectionRowProps } from "./settings/-settings.types";
 import { StatusBadge } from "./settings/-status-badge";
 
 export function ConnectionRow({ connection }: ConnectionRowProps) {

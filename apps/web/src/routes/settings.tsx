@@ -17,7 +17,7 @@ import { updateProviderSettings } from "@/lib/api";
 
 import { ConnectionRow } from "./settings/-connection-row";
 import { ProviderCard } from "./settings/-provider-card";
-import type { ProviderId } from "./settings/settings.types";
+import type { ProviderId } from "./settings/-settings.types";
 
 export const Route = createFileRoute("/settings")({
   loader: async ({ context }) => {

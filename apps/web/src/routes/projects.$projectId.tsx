@@ -1,9 +1,10 @@
 import { createFileRoute, notFound, Outlet } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
+import { useEffect } from "react";
 
 import { projectRouteId } from "@/lib/project-route";
 import { projectDetailQueryOptions, projectsListQueryOptions } from "@/lib/query-options";
-import { ProjectContext } from "@/providers/project-context";
+import { useProjectStore } from "@/stores/project-store";
 
 export const Route = createFileRoute("/projects/$projectId")({
   loader: async ({ context, params }) => {
@@ -24,6 +25,16 @@ export const Route = createFileRoute("/projects/$projectId")({
 function WorkspaceLayout() {
   const { resolvedProjectId } = Route.useLoaderData();
   const { data: project } = useQuery(projectDetailQueryOptions(resolvedProjectId));
+  const setCurrentProject = useProjectStore((state) => state.setCurrentProject);
+
+  useEffect(() => {
+    if (project) {
+      setCurrentProject(project);
+    }
+    return () => {
+      setCurrentProject(null);
+    };
+  }, [project, setCurrentProject]);
 
   if (!project) {
     return (
@@ -33,9 +44,5 @@ function WorkspaceLayout() {
     );
   }
 
-  return (
-    <ProjectContext value={{ project }}>
-      <Outlet />
-    </ProjectContext>
-  );
+  return <Outlet />;
 }

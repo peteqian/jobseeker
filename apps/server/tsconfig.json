@@ -2,7 +2,8 @@
   "extends": "../../tsconfig.json",
   "compilerOptions": {
     "typeRoots": ["../../node_modules/@types"],
-    "types": ["bun"]
+    "types": ["bun"],
+    "allowImportingTsExtensions": true
   },
   "include": ["src/**/*.ts"]
 }

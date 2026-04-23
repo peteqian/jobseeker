@@ -3,7 +3,7 @@ import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
-import type { ProviderCardProps, ProviderSummary } from "./settings/settings.types";
+import type { ProviderCardProps, ProviderSummary } from "./settings/-settings.types";
 
 function getProviderSummary(input: {
   enabled: boolean;

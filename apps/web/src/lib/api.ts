@@ -1,6 +1,7 @@
 import type {
   ChatMessage,
   ExplorerConfigRecord,
+  ProjectDocument,
   QuestionAnswerMap,
   ResumePasteInput,
   ResumeUploadResult,
@@ -33,24 +34,48 @@ async function parseJson<T>(response: Response): Promise<T> {
   return (await response.json()) as T;
 }
 
+async function get<T>(path: string): Promise<T> {
+  const response = await fetch(apiUrl(path));
+  return parseJson<T>(response);
+}
+
+async function post<T>(
+  path: string,
+  body?: unknown,
+  options?: { formData?: FormData },
+): Promise<T> {
+  const response = await fetch(apiUrl(path), {
+    method: "POST",
+    headers: options?.formData ? undefined : { "content-type": "application/json" },
+    body: options?.formData ?? (body ? JSON.stringify(body) : undefined),
+  });
+  return parseJson<T>(response);
+}
+
+async function put<T>(path: string, body: unknown): Promise<T> {
+  const response = await fetch(apiUrl(path), {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return parseJson<T>(response);
+}
+
+async function del<T>(path: string): Promise<T> {
+  const response = await fetch(apiUrl(path), { method: "DELETE" });
+  return parseJson<T>(response);
+}
+
 export async function getProjects(): Promise<ProjectSnapshot[]> {
-  const response = await fetch(apiUrl("/api/projects"));
-  return (await parseJson<ProjectListResponse>(response)).projects;
+  return (await get<ProjectListResponse>("/api/projects")).projects;
 }
 
 export async function getProject(projectId: string): Promise<ProjectSnapshot> {
-  const response = await fetch(apiUrl(`/api/projects/${projectId}`));
-  return parseJson<ProjectSnapshot>(response);
+  return get<ProjectSnapshot>(`/api/projects/${projectId}`);
 }
 
 export async function createProject(title: string): Promise<ProjectSnapshot> {
-  const response = await fetch(apiUrl("/api/projects"), {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ title }),
-  });
-
-  return parseJson<ProjectSnapshot>(response);
+  return post<ProjectSnapshot>("/api/projects", { title });
 }
 
 export async function uploadProjectResume(
@@ -59,111 +84,77 @@ export async function uploadProjectResume(
 ): Promise<ResumeUploadResult> {
   const formData = new FormData();
   formData.set("file", file);
-
-  const response = await fetch(apiUrl(`/api/projects/${projectId}/resume`), {
-    method: "POST",
-    body: formData,
-  });
-
-  return parseJson<ResumeUploadResult>(response);
+  return post<ResumeUploadResult>(`/api/projects/${projectId}/resume`, undefined, { formData });
 }
 
 export async function pasteProjectResume(
   projectId: string,
   input: ResumePasteInput,
 ): Promise<ResumeUploadResult> {
-  const response = await fetch(apiUrl(`/api/projects/${projectId}/resume/paste`), {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(input),
-  });
-
-  return parseJson<ResumeUploadResult>(response);
+  return post<ResumeUploadResult>(`/api/projects/${projectId}/resume/paste`, input);
 }
 
 export async function startProjectTask(input: StartTaskInput) {
-  const response = await fetch(apiUrl("/api/tasks"), {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(input),
-  });
-
-  return parseJson(response);
+  return post("/api/tasks", input);
 }
 
 export async function submitQuestionAnswers(projectId: string, answers: QuestionAnswerMap) {
-  const response = await fetch(apiUrl(`/api/projects/${projectId}/questions/answers`), {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ answers }),
-  });
-
-  return parseJson<ProjectSnapshot>(response);
+  return post<ProjectSnapshot>(`/api/projects/${projectId}/questions/answers`, { answers });
 }
 
 export async function updateQuestionCard(input: UpdateQuestionCardInput) {
-  const response = await fetch(
-    apiUrl(`/api/projects/${input.projectId}/question-cards/${input.cardId}`),
-    {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ answer: input.answer }),
-    },
-  );
-
-  return parseJson<ProjectSnapshot>(response);
+  return put<ProjectSnapshot>(`/api/projects/${input.projectId}/question-cards/${input.cardId}`, {
+    answer: input.answer,
+  });
 }
 
 export async function saveProjectProfile(
   projectId: string,
   profile: StructuredProfile,
 ): Promise<ProjectSnapshot> {
-  const response = await fetch(apiUrl(`/api/projects/${projectId}/profile`), {
-    method: "PUT",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(profile),
-  });
-
-  return parseJson<ProjectSnapshot>(response);
+  return put<ProjectSnapshot>(`/api/projects/${projectId}/profile`, profile);
 }
 
 export async function getResumeVersions(projectId: string): Promise<ResumeVersion[]> {
-  const response = await fetch(apiUrl(`/api/projects/${projectId}/resume/versions`));
-  return (await parseJson<ResumeVersionsResponse>(response)).versions;
+  return (await get<ResumeVersionsResponse>(`/api/projects/${projectId}/resume/versions`)).versions;
 }
 
 export async function switchActiveResume(
   projectId: string,
   documentId: string,
 ): Promise<ProjectSnapshot> {
-  const response = await fetch(apiUrl(`/api/projects/${projectId}/resume/activate`), {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ documentId }),
-  });
-
-  return parseJson<ProjectSnapshot>(response);
+  return post<ProjectSnapshot>(`/api/projects/${projectId}/resume/activate`, { documentId });
 }
 
 export async function deleteProjectResume(
   projectId: string,
   documentId: string,
 ): Promise<ProjectSnapshot> {
-  const response = await fetch(apiUrl(`/api/projects/${projectId}/resume/${documentId}`), {
-    method: "DELETE",
-  });
+  return del<ProjectSnapshot>(`/api/projects/${projectId}/resume/${documentId}`);
+}
 
-  return parseJson<ProjectSnapshot>(response);
+export async function deleteProjectJob(projectId: string, jobId: string): Promise<ProjectSnapshot> {
+  return del<ProjectSnapshot>(`/api/projects/${projectId}/jobs/${jobId}`);
+}
+
+export async function updateDocument(
+  projectId: string,
+  documentId: string,
+  input: { content: string },
+): Promise<ProjectDocument> {
+  const response = await put<{ document: ProjectDocument }>(
+    `/api/projects/${projectId}/documents/${documentId}`,
+    input,
+  );
+  return response.document;
 }
 
 export async function getProjectEvents(projectId: string): Promise<RuntimeEvent[]> {
-  const response = await fetch(apiUrl(`/api/projects/${projectId}/events`));
-  return (await parseJson<EventListResponse>(response)).events;
+  return (await get<EventListResponse>(`/api/projects/${projectId}/events`)).events;
 }
 
 export async function getAllEvents(): Promise<RuntimeEvent[]> {
-  const response = await fetch(apiUrl("/api/events"));
-  return (await parseJson<EventListResponse>(response)).events;
+  return (await get<EventListResponse>("/api/events")).events;
 }
 
 export type ConnectionStatus = {
@@ -195,49 +186,35 @@ export type ProviderSettings = {
 type ConnectionsResponse = { connections: ConnectionStatus[] };
 
 export async function getConnections(): Promise<ConnectionStatus[]> {
-  const response = await fetch(apiUrl("/api/settings/connections"));
-  return (await parseJson<ConnectionsResponse>(response)).connections;
+  return (await get<ConnectionsResponse>("/api/settings/connections")).connections;
 }
 
 export async function getProviderSettings(): Promise<ProviderSettings> {
-  const response = await fetch(apiUrl("/api/settings/providers"));
-  return (await parseJson<{ providers: ProviderSettings }>(response)).providers;
+  return (await get<{ providers: ProviderSettings }>("/api/settings/providers")).providers;
 }
 
 export async function updateProviderSettings(
   settings: Partial<ProviderSettings>,
 ): Promise<ProviderSettings> {
-  const response = await fetch(apiUrl("/api/settings/providers"), {
-    method: "PUT",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(settings),
-  });
-  return (await parseJson<{ providers: ProviderSettings }>(response)).providers;
+  return (await put<{ providers: ProviderSettings }>("/api/settings/providers", settings))
+    .providers;
 }
 
 export async function updateProjectExplorer(
   projectId: string,
   input: UpdateExplorerConfigInput,
 ): Promise<ExplorerConfigRecord> {
-  const response = await fetch(apiUrl(`/api/projects/${projectId}/explorer`), {
-    method: "PUT",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(input),
-  });
-
-  return (await parseJson<ExplorerResponse>(response)).explorer;
+  return (await put<ExplorerResponse>(`/api/projects/${projectId}/explorer`, input)).explorer;
 }
 
 export type ChatProviderStatus = { id: string; available: boolean };
 
 export async function getChatProviders(): Promise<ChatProviderStatus[]> {
-  const response = await fetch(apiUrl("/api/chat/providers"));
-  return (await parseJson<{ providers: ChatProviderStatus[] }>(response)).providers;
+  return (await get<{ providers: ChatProviderStatus[] }>("/api/chat/providers")).providers;
 }
 
 export async function getChatMessages(projectId: string): Promise<ChatMessage[]> {
-  const response = await fetch(apiUrl(`/api/projects/${projectId}/chat/messages`));
-  return parseJson<ChatMessage[]>(response);
+  return get<ChatMessage[]>(`/api/projects/${projectId}/chat/messages`);
 }
 
 export async function sendChatMessage(
@@ -260,9 +237,5 @@ export async function sendChatMessage(
 }
 
 export async function dismissInsightCard(projectId: string, cardId: string): Promise<void> {
-  const response = await fetch(apiUrl(`/api/projects/${projectId}/insight-cards/${cardId}`), {
-    method: "DELETE",
-  });
-
-  await parseJson(response);
+  await del(`/api/projects/${projectId}/insight-cards/${cardId}`);
 }

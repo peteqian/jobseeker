@@ -2,7 +2,7 @@ import { Link } from "@tanstack/react-router";
 
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button-variants";
-import type { ResumeBannerProps } from "./projects.$projectId.coach/coach.types";
+import type { ResumeBannerProps } from "./projects.$projectId.coach/-coach.types";
 
 export function ResumeBanner({ resumeDoc, activeThread, projectSlug }: ResumeBannerProps) {
   if (!resumeDoc) return null;

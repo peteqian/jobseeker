@@ -28,22 +28,33 @@ import {
 } from "@/lib/explorer";
 import { useChat } from "@/hooks/use-chat";
 import { useModelChoice } from "@/hooks/use-model-choice";
-import { useJobseeker, useProjectEvents } from "@/providers/jobseeker-hooks";
+import { useDeleteJob, useSaveExplorer, useStartTask } from "@/hooks/use-project-mutations";
+import { useProjectEvents } from "@/hooks/use-project-events";
 import { useShellHeaderMeta } from "@/providers/shell-header-context";
-import { useProject } from "@/providers/project-context";
+import { useProjectStore } from "@/stores/project-store";
 import { createThread } from "@/rpc/chat-client";
 
-import { ConfigTab } from "./projects.$projectId.explorer/-config-tab";
+import { ConfigureRunTab } from "./projects.$projectId.explorer/-configure-run-tab";
 import { DomainConfigForm } from "./projects.$projectId.explorer/-domain-config-form";
-import { ManageTab } from "./projects.$projectId.explorer/-manage-tab";
 import { ResultsTab } from "./projects.$projectId.explorer/-results-tab";
 import type {
   ExplorerRunSession,
   ExplorerRawLogLine,
   ExplorerFeedItem,
-} from "./projects.$projectId.explorer/explorer.types";
+} from "./projects.$projectId.explorer/-explorer.types";
+
+interface ExplorerSearch {
+  tab?: "config" | "results";
+  job?: string;
+}
 
 export const Route = createFileRoute("/projects/$projectId/explorer")({
+  validateSearch: (search: Record<string, unknown>): ExplorerSearch => {
+    const tab =
+      search.tab === "results" ? "results" : search.tab === "config" ? "config" : undefined;
+    const job = typeof search.job === "string" && search.job.length > 0 ? search.job : undefined;
+    return { tab, job };
+  },
   loader: async ({ context, params }) => {
     const projects = await context.queryClient.ensureQueryData(projectsListQueryOptions());
     const project = projects.find((entry) => entry.project.slug === params.projectId);
@@ -58,22 +69,34 @@ export const Route = createFileRoute("/projects/$projectId/explorer")({
 });
 
 const EMPTY_THREADS: ChatThread[] = [];
+const EMPTY_DOMAINS: ExplorerDomainConfig[] = [];
 
 function ExplorerPage() {
-  const { project } = useProject();
+  const project = useProjectStore((state) => state.currentProject);
   const queryClient = useQueryClient();
-  const projectId = project.project.id;
-  const { busyAction, startTask, saveExplorer } = useJobseeker();
+  const projectId = project?.project.id ?? "";
   const events = useProjectEvents(projectId);
+
+  const startTaskMutation = useStartTask();
+  const saveExplorerMutation = useSaveExplorer();
+  const deleteJobMutation = useDeleteJob();
+
+  const busyAction = startTaskMutation.isPending
+    ? "explorer-discovery"
+    : saveExplorerMutation.isPending
+      ? "save-explorer"
+      : deleteJobMutation.isPending
+        ? "delete-job"
+        : null;
   const {
     providers: explorerProviders,
     selection: explorerSelection,
     setSelection: setExplorerSelection,
     providersLoading: explorerProvidersLoading,
   } = useModelChoice(projectId, "explorer");
-  const hasProfile = Boolean(project.profile);
-  const savedDomains = project.explorer.domains;
-  const savedIncludeAgentSuggestions = project.explorer.includeAgentSuggestions;
+  const hasProfile = Boolean(project?.profile);
+  const savedDomains = project?.explorer.domains ?? EMPTY_DOMAINS;
+  const savedIncludeAgentSuggestions = project?.explorer.includeAgentSuggestions ?? false;
   const threads = useQuery(explorerThreadsQueryOptions(projectId)).data ?? EMPTY_THREADS;
 
   const [draftDomains, setDraftDomains] = useState<ExplorerDomainConfig[]>(savedDomains);
@@ -112,8 +135,8 @@ function ExplorerPage() {
   useShellHeaderMeta(shellHeader);
 
   const querySuggestions = useMemo(
-    () => getExplorerQuerySuggestions(project.profile),
-    [project.profile],
+    () => getExplorerQuerySuggestions(project?.profile ?? null),
+    [project?.profile],
   );
 
   const stats = useMemo(() => getExplorerStats(draftDomains), [draftDomains]);
@@ -183,6 +206,33 @@ function ExplorerPage() {
     [draftDomains, editingDomain],
   );
 
+  const search = Route.useSearch();
+  const navigate = Route.useNavigate();
+  const activeTab = search.tab ?? "config";
+  const selectedJobId = search.job ?? null;
+
+  const handleTabChange = (next: string) => {
+    const tab = next === "results" ? "results" : "config";
+    void navigate({
+      search: (prev) => ({ ...prev, tab, job: tab === "results" ? prev.job : undefined }),
+      replace: true,
+    });
+  };
+
+  const handleSelectJob = (jobId: string | null) => {
+    void navigate({
+      search: (prev) => ({ ...prev, job: jobId ?? undefined }),
+    });
+  };
+
+  if (!project) {
+    return (
+      <div className="rounded-lg bg-muted/30 p-6 text-sm text-muted-foreground">
+        Project not found.
+      </div>
+    );
+  }
+
   function handleAddDomain() {
     const parsed = parseDomainLines(addDomainInput);
     if (parsed.length === 0) return;
@@ -217,9 +267,12 @@ function ExplorerPage() {
   }
 
   async function persistDraft() {
-    await saveExplorer(projectId, {
-      domains: draftDomains,
-      includeAgentSuggestions: draftIncludeAgent,
+    await saveExplorerMutation.mutateAsync({
+      projectId,
+      input: {
+        domains: draftDomains,
+        includeAgentSuggestions: draftIncludeAgent,
+      },
     });
   }
 
@@ -236,14 +289,11 @@ function ExplorerPage() {
     appendThreadToCache(queryClient, projectId, "explorer", runThread);
     setActiveThreadId(runThread.id);
 
-    await startTask(
-      {
-        projectId,
-        type: "explorer_discovery",
-        modelSelection: effectiveExplorerSelection,
-      },
-      "explorer-discovery",
-    );
+    await startTaskMutation.mutateAsync({
+      projectId,
+      type: "explorer_discovery",
+      modelSelection: effectiveExplorerSelection,
+    });
   }
 
   function resetDraftFromSaved() {
@@ -253,10 +303,14 @@ function ExplorerPage() {
 
   return (
     <div className="flex h-full min-h-0 flex-col space-y-4">
-      <Tabs defaultValue="config" className="flex min-h-0 flex-1 flex-col">
+      <Tabs
+        value={activeTab}
+        onValueChange={handleTabChange}
+        className="flex min-h-0 flex-1 flex-col"
+      >
         <div className="mb-4 flex items-center justify-between">
           <TabsList>
-            <TabsTrigger value="config">Config</TabsTrigger>
+            <TabsTrigger value="config">Configure & Run</TabsTrigger>
             <TabsTrigger value="results">
               Results
               {project.jobs.length > 0 ? (
@@ -265,12 +319,11 @@ function ExplorerPage() {
                 </Badge>
               ) : null}
             </TabsTrigger>
-            <TabsTrigger value="manage">Manage</TabsTrigger>
           </TabsList>
         </div>
 
-        <TabsContent value="config" className="m-0 min-h-0 flex-1 overflow-y-auto">
-          <ConfigTab
+        <TabsContent value="config" className="m-0 min-h-0 flex-1 overflow-hidden">
+          <ConfigureRunTab
             domains={draftDomains}
             stats={stats}
             addDomainInput={addDomainInput}
@@ -293,15 +346,6 @@ function ExplorerPage() {
             onRun={() => void handleRunExplorer()}
             onDiscard={resetDraftFromSaved}
             onOpenSettings={() => setSettingsOpen(true)}
-          />
-        </TabsContent>
-
-        <TabsContent value="results" className="m-0 min-h-0 flex-1 overflow-y-auto">
-          <ResultsTab domains={savedDomains} jobs={project.jobs} matches={project.jobMatches} />
-        </TabsContent>
-
-        <TabsContent value="manage" className="m-0 min-h-0 flex-1 overflow-y-auto">
-          <ManageTab
             sessions={runHistory}
             activeThreadId={activeThreadId}
             onSelectSession={setActiveThreadId}
@@ -317,6 +361,29 @@ function ExplorerPage() {
             debugError={debugError}
             onSendDebugMessage={sendDebugMessage}
             onInterruptDebugMessage={interruptDebugMessage}
+          />
+        </TabsContent>
+
+        <TabsContent value="results" className="m-0 min-h-0 flex-1 overflow-hidden">
+          <ResultsTab
+            projectId={projectId}
+            domains={savedDomains}
+            jobs={project.jobs}
+            matches={project.jobMatches}
+            documents={project.documents}
+            selectedJobId={selectedJobId}
+            onSelectJob={handleSelectJob}
+            onDeleteJob={(projectId, jobId) =>
+              void deleteJobMutation.mutateAsync({ projectId, jobId })
+            }
+            onGenerate={(jobId, type) =>
+              void startTaskMutation.mutateAsync({
+                projectId,
+                type,
+                jobId,
+              })
+            }
+            busyAction={busyAction}
           />
         </TabsContent>
 

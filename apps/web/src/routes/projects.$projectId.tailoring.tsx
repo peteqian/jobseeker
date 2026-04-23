@@ -7,21 +7,21 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 
+import { useStartTask } from "@/hooks/use-project-mutations";
 import { getRankedJobs, latestDocument } from "@/lib/project";
-import { useJobseeker } from "@/providers/jobseeker-hooks";
 import { useShellHeaderMeta } from "@/providers/shell-header-context";
-import { useProject } from "@/providers/project-context";
+import { useProjectStore } from "@/stores/project-store";
 
 export const Route = createFileRoute("/projects/$projectId/tailoring")({
   component: TailoringPage,
 });
 
 function TailoringPage() {
-  const { project } = useProject();
-  const { busyAction, startTask } = useJobseeker();
+  const project = useProjectStore((state) => state.currentProject);
+  const startTask = useStartTask();
 
-  const rankedJobs = useMemo(() => getRankedJobs(project), [project]);
-  const tailoredResume = latestDocument(project.documents, "tailored_resume");
+  const rankedJobs = useMemo(() => (project ? getRankedJobs(project) : []), [project]);
+  const tailoredResume = project ? latestDocument(project.documents, "tailored_resume") : null;
   const shellHeader = useMemo(
     () => ({
       title: "Tailoring",
@@ -44,6 +44,14 @@ function TailoringPage() {
 
   const selectedJob =
     rankedJobs.find(({ job }) => job.id === selectedJobId)?.job ?? rankedJobs[0]?.job ?? null;
+
+  if (!project) {
+    return (
+      <div className="rounded-lg bg-muted/30 p-6 text-sm text-muted-foreground">
+        Project not found.
+      </div>
+    );
+  }
 
   return (
     <div className="grid gap-8 xl:grid-cols-2">
@@ -93,20 +101,17 @@ function TailoringPage() {
 
         <Button
           onClick={() =>
-            void startTask(
-              {
-                projectId: project.project.id,
-                type: "resume_tailoring",
-                jobId: selectedJobId ?? undefined,
-              },
-              "resume-tailoring",
-            )
+            void startTask.mutate({
+              projectId: project.project.id,
+              type: "resume_tailoring",
+              jobId: selectedJobId ?? undefined,
+            })
           }
-          disabled={!selectedJobId || busyAction === "resume-tailoring"}
+          disabled={!selectedJobId || startTask.isPending}
           className="w-fit"
         >
           <FileText className="size-4" />
-          {busyAction === "resume-tailoring" ? "Tailoring..." : "Tailor resume"}
+          {startTask.isPending ? "Tailoring..." : "Tailor resume"}
         </Button>
       </section>
 

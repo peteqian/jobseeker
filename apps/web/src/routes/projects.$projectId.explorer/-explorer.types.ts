@@ -70,6 +70,8 @@ export interface ConfigTabProps {
   onOpenSettings: () => void;
 }
 
+export interface ConfigureRunTabProps extends ConfigTabProps, ManageTabProps {}
+
 export interface DomainConfigFormProps {
   config: ExplorerDomainConfig;
   suggestions: import("@/lib/explorer").ExplorerQuerySuggestion[];
@@ -79,9 +81,16 @@ export interface DomainConfigFormProps {
 }
 
 export interface ResultsTabProps {
+  projectId: string;
   domains: ExplorerDomainConfig[];
   jobs: JobRecord[];
   matches: JobMatch[];
+  documents: import("@jobseeker/contracts").ProjectDocument[];
+  selectedJobId: string | null;
+  onSelectJob: (jobId: string | null) => void;
+  onDeleteJob: (projectId: string, jobId: string) => Promise<void>;
+  onGenerate: (jobId: string, type: "resume_tailoring" | "cover_letter_tailoring") => void;
+  busyAction: string | null;
 }
 
 export interface ManageTabProps {
@@ -117,4 +126,11 @@ export interface DomainRailButtonProps {
 export interface JobResultCardProps {
   job: JobRecord;
   match?: JobMatch;
+  isSelected: boolean;
+  onSelect: () => void;
+  onDelete: () => void;
+  onGenerate: (type: "resume_tailoring" | "cover_letter_tailoring") => void;
+  busyAction: string | null;
+  hasResume: boolean;
+  hasCoverLetter: boolean;
 }

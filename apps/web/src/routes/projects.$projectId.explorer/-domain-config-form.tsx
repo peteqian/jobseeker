@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { SheetFooter, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
 import { addQueryToDomain, removeQueryFromDomain, FRESHNESS_LABELS } from "@/lib/explorer";
-import type { DomainConfigFormProps } from "./projects.$projectId.explorer/explorer.types";
+import type { DomainConfigFormProps } from "./projects.$projectId.explorer/-explorer.types";
 
 const FRESHNESS_OPTIONS: import("@jobseeker/contracts").ExplorerFreshness[] = [
   "24h",

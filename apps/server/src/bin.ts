@@ -67,6 +67,7 @@ const server = Bun.serve({
   fetch: app.fetch,
   hostname: env.HOST,
   port: env.PORT,
+  idleTimeout: 0,
 });
 
 logInfo("http server listening", {

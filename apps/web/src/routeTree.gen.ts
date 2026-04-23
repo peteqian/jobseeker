@@ -20,6 +20,7 @@ import { Route as ProjectsProjectIdResumeRouteImport } from "./routes/projects.$
 import { Route as ProjectsProjectIdProfileRouteImport } from "./routes/projects.$projectId.profile"
 import { Route as ProjectsProjectIdExplorerRouteImport } from "./routes/projects.$projectId.explorer"
 import { Route as ProjectsProjectIdCoachRouteImport } from "./routes/projects.$projectId.coach"
+import { Route as ProjectsProjectIdJobsJobIdEditorRouteImport } from "./routes/projects.$projectId.jobs.$jobId.editor"
 
 const SettingsRoute = SettingsRouteImport.update({
   id: "/settings",
@@ -79,6 +80,12 @@ const ProjectsProjectIdCoachRoute = ProjectsProjectIdCoachRouteImport.update({
   path: "/coach",
   getParentRoute: () => ProjectsProjectIdRoute,
 } as any)
+const ProjectsProjectIdJobsJobIdEditorRoute =
+  ProjectsProjectIdJobsJobIdEditorRouteImport.update({
+    id: "/jobs/$jobId/editor",
+    path: "/jobs/$jobId/editor",
+    getParentRoute: () => ProjectsProjectIdRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   "/": typeof IndexRoute
@@ -92,6 +99,7 @@ export interface FileRoutesByFullPath {
   "/projects/$projectId/resume": typeof ProjectsProjectIdResumeRoute
   "/projects/$projectId/tailoring": typeof ProjectsProjectIdTailoringRoute
   "/projects/$projectId/": typeof ProjectsProjectIdIndexRoute
+  "/projects/$projectId/jobs/$jobId/editor": typeof ProjectsProjectIdJobsJobIdEditorRoute
 }
 export interface FileRoutesByTo {
   "/": typeof IndexRoute
@@ -104,6 +112,7 @@ export interface FileRoutesByTo {
   "/projects/$projectId/resume": typeof ProjectsProjectIdResumeRoute
   "/projects/$projectId/tailoring": typeof ProjectsProjectIdTailoringRoute
   "/projects/$projectId": typeof ProjectsProjectIdIndexRoute
+  "/projects/$projectId/jobs/$jobId/editor": typeof ProjectsProjectIdJobsJobIdEditorRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -118,6 +127,7 @@ export interface FileRoutesById {
   "/projects/$projectId/resume": typeof ProjectsProjectIdResumeRoute
   "/projects/$projectId/tailoring": typeof ProjectsProjectIdTailoringRoute
   "/projects/$projectId/": typeof ProjectsProjectIdIndexRoute
+  "/projects/$projectId/jobs/$jobId/editor": typeof ProjectsProjectIdJobsJobIdEditorRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -133,6 +143,7 @@ export interface FileRouteTypes {
     | "/projects/$projectId/resume"
     | "/projects/$projectId/tailoring"
     | "/projects/$projectId/"
+    | "/projects/$projectId/jobs/$jobId/editor"
   fileRoutesByTo: FileRoutesByTo
   to:
     | "/"
@@ -145,6 +156,7 @@ export interface FileRouteTypes {
     | "/projects/$projectId/resume"
     | "/projects/$projectId/tailoring"
     | "/projects/$projectId"
+    | "/projects/$projectId/jobs/$jobId/editor"
   id:
     | "__root__"
     | "/"
@@ -158,6 +170,7 @@ export interface FileRouteTypes {
     | "/projects/$projectId/resume"
     | "/projects/$projectId/tailoring"
     | "/projects/$projectId/"
+    | "/projects/$projectId/jobs/$jobId/editor"
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -247,6 +260,13 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof ProjectsProjectIdCoachRouteImport
       parentRoute: typeof ProjectsProjectIdRoute
     }
+    "/projects/$projectId/jobs/$jobId/editor": {
+      id: "/projects/$projectId/jobs/$jobId/editor"
+      path: "/jobs/$jobId/editor"
+      fullPath: "/projects/$projectId/jobs/$jobId/editor"
+      preLoaderRoute: typeof ProjectsProjectIdJobsJobIdEditorRouteImport
+      parentRoute: typeof ProjectsProjectIdRoute
+    }
   }
 }
 
@@ -257,6 +277,7 @@ interface ProjectsProjectIdRouteChildren {
   ProjectsProjectIdResumeRoute: typeof ProjectsProjectIdResumeRoute
   ProjectsProjectIdTailoringRoute: typeof ProjectsProjectIdTailoringRoute
   ProjectsProjectIdIndexRoute: typeof ProjectsProjectIdIndexRoute
+  ProjectsProjectIdJobsJobIdEditorRoute: typeof ProjectsProjectIdJobsJobIdEditorRoute
 }
 
 const ProjectsProjectIdRouteChildren: ProjectsProjectIdRouteChildren = {
@@ -266,6 +287,7 @@ const ProjectsProjectIdRouteChildren: ProjectsProjectIdRouteChildren = {
   ProjectsProjectIdResumeRoute: ProjectsProjectIdResumeRoute,
   ProjectsProjectIdTailoringRoute: ProjectsProjectIdTailoringRoute,
   ProjectsProjectIdIndexRoute: ProjectsProjectIdIndexRoute,
+  ProjectsProjectIdJobsJobIdEditorRoute: ProjectsProjectIdJobsJobIdEditorRoute,
 }
 
 const ProjectsProjectIdRouteWithChildren =

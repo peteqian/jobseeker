@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { projectRouteId } from "@/lib/project-route";
 import { projectsListQueryOptions } from "@/lib/query-options";
 import { getProjectStages } from "@/lib/project";
-import { useJobseeker } from "@/providers/jobseeker-hooks";
+import { useQuery } from "@tanstack/react-query";
 
 const STAGE_COUNT = 5;
 
@@ -16,7 +16,7 @@ export const Route = createFileRoute("/projects/")({
 });
 
 function WorkspacesPage() {
-  const { projects } = useJobseeker();
+  const { data: projects = [] } = useQuery(projectsListQueryOptions());
 
   return (
     <section id="project-list" className="space-y-5">

@@ -1,7 +1,7 @@
 import { CheckCircle2, XCircle } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
-import type { StatusBadgeProps } from "./settings/settings.types";
+import type { StatusBadgeProps } from "./settings/-settings.types";
 
 export function StatusBadge({ ok }: StatusBadgeProps) {
   if (ok) {

@@ -3,6 +3,7 @@ import type { ChatModelSelection, StartTaskInput } from "@jobseeker/contracts";
 import { runExplorerDiscovery } from "../explorer";
 import { writeProjectRuntimeEvent } from "../runtimeEvents";
 import { buildAndSaveProfile, createQuestionCardsIfMissing } from "./resumeIngest";
+import { runTailoringTask } from "./tailoring";
 
 export interface TaskRunResult {
   jobsCreated?: number;
@@ -29,6 +30,17 @@ export async function runTask(
 
   if (input.type === "explorer_discovery") {
     return runExplorerDiscoveryTask(input.projectId, taskId, input.modelSelection);
+  }
+
+  if (input.type === "resume_tailoring" || input.type === "cover_letter_tailoring") {
+    await runTailoringTask({
+      projectId: input.projectId,
+      taskId,
+      jobId: input.jobId,
+      kind: input.type,
+      modelSelection: input.modelSelection,
+    });
+    return {};
   }
 
   return {};

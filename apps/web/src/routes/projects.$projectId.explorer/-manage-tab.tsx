@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 
 import { ChatInput } from "@/components/chat/chat-input";
-import type { ManageTabProps } from "./projects.$projectId.explorer/explorer.types";
+import type { ManageTabProps } from "./projects.$projectId.explorer/-explorer.types";
 
 function buildSessionStreamItems(
   messages: import("@jobseeker/contracts").ChatMessage[],

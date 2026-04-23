@@ -154,6 +154,7 @@ export async function buildProjectSnapshot(
     documents: docs.map((document) => ({
       id: document.id,
       projectId: document.projectId,
+      jobId: document.jobId,
       kind: document.kind as ProjectDocument["kind"],
       mimeType: document.mimeType,
       name: document.name,

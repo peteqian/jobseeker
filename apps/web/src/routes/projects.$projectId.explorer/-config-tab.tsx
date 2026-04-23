@@ -22,7 +22,7 @@ import {
 } from "@/components/ui/table";
 import { ProviderModelPicker } from "@/components/chat/provider-model-picker";
 import { FRESHNESS_LABELS } from "@/lib/explorer";
-import type { ConfigTabProps } from "./projects.$projectId.explorer/explorer.types";
+import type { ConfigTabProps } from "./projects.$projectId.explorer/-explorer.types";
 
 export function ConfigTab({
   domains,

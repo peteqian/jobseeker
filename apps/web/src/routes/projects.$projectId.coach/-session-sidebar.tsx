@@ -1,7 +1,7 @@
 import { MessageSquarePlus, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import type { SessionSidebarProps } from "./projects.$projectId.coach/coach.types";
+import type { SessionSidebarProps } from "./projects.$projectId.coach/-coach.types";
 
 export function SessionSidebar({
   threads,

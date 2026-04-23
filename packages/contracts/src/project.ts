@@ -50,6 +50,7 @@ export interface TaskRecord {
 export interface ProjectDocument {
   id: string;
   projectId: string;
+  jobId?: string | null;
   kind: ProjectDocumentKind;
   mimeType: string;
   name: string;

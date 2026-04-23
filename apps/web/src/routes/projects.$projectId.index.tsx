@@ -8,26 +8,42 @@ import { projectRouteId } from "@/lib/project-route";
 import { getProjectStages } from "@/lib/project";
 import { useMemo } from "react";
 import { useShellHeaderMeta } from "@/providers/shell-header-context";
-import { useProject } from "@/providers/project-context";
+import { useProjectStore } from "@/stores/project-store";
 
 export const Route = createFileRoute("/projects/$projectId/")({
   component: WorkspaceOverviewPage,
 });
 
 function WorkspaceOverviewPage() {
-  const { project } = useProject();
-  const stages = getProjectStages(project);
-  const nextStage = stages.find((stage) => !stage.complete);
+  const project = useProjectStore((state) => state.currentProject);
+
   const shellHeader = useMemo(
-    () => ({
-      title: project.project.title,
-      description:
-        "Open this project to continue the job search flow from intake through tailoring.",
-    }),
-    [project.project.title],
+    () =>
+      project
+        ? {
+            title: project.project.title,
+            description:
+              "Open this project to continue the job search flow from intake through tailoring.",
+          }
+        : {
+            title: "Project",
+            description: "Loading project...",
+          },
+    [project],
   );
 
   useShellHeaderMeta(shellHeader);
+
+  if (!project) {
+    return (
+      <div className="rounded-lg bg-muted/30 p-6 text-sm text-muted-foreground">
+        Project not found.
+      </div>
+    );
+  }
+
+  const stages = getProjectStages(project);
+  const nextStage = stages.find((stage) => !stage.complete);
 
   return (
     <div className="mx-auto max-w-6xl space-y-5 lg:space-y-6">
@@ -96,7 +112,6 @@ function stageLink(stageId: string) {
     profile: "/projects/$projectId/profile",
     questions: "/projects/$projectId/coach",
     explorer: "/projects/$projectId/explorer",
-    tailor: "/projects/$projectId/tailoring",
   };
 
   return routes[stageId] ?? "/projects/$projectId";

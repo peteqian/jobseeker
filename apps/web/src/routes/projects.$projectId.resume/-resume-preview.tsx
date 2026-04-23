@@ -1,7 +1,7 @@
 import { FileText } from "lucide-react";
 
 import type { ResumeVersion } from "@jobseeker/contracts";
-import type { ContentState } from "./projects.$projectId.resume/resume.types";
+import type { ContentState } from "./projects.$projectId.resume/-resume.types";
 
 function getContentState(version: ResumeVersion | null): ContentState {
   if (!version) {

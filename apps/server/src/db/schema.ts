@@ -36,6 +36,7 @@ export const documents = sqliteTable("documents", {
   projectId: text("project_id")
     .notNull()
     .references(() => projects.id, { onDelete: "cascade" }),
+  jobId: text("job_id"),
   kind: text("kind").notNull(),
   mimeType: text("mime_type").notNull(),
   name: text("name").notNull(),

@@ -1,5 +1,5 @@
 import { Badge } from "@/components/ui/badge";
-import type { ExplorerLiveFeedProps } from "./projects.$projectId.explorer/explorer.types";
+import type { ExplorerLiveFeedProps } from "./projects.$projectId.explorer/-explorer.types";
 
 export function ExplorerLiveFeed({ items, isRunning }: ExplorerLiveFeedProps) {
   return (
