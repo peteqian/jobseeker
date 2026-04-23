@@ -122,6 +122,8 @@ export interface StartTaskInput {
   type: TaskType;
   input?: string;
   jobId?: string;
+  resumeDocId?: string;
+  focusArea?: string;
   modelSelection?: import("./model").ChatModelSelection;
 }
 

@@ -4,6 +4,7 @@ import { desc, eq } from "drizzle-orm";
 import { makeId } from "../lib/ids";
 import { extractResumeText, getExtractedName } from "../services/resume";
 import { buildProjectSnapshot } from "../services/projects/snapshot";
+import { startTask } from "../services/tasks/startTask";
 import { db } from "../db";
 import { documents, projects } from "../db/schema";
 
@@ -70,6 +71,13 @@ export function registerResumeRoutes(app: Hono) {
       .set({ activeResumeSourceId: documentId })
       .where(eq(projects.id, projectId));
 
+    void startTask({
+      projectId,
+      type: "coach_review",
+      resumeDocId: documentId,
+      focusArea: "Overall resume",
+    }).catch(() => {});
+
     return c.json({ documentId, name: file.name }, 201);
   });
 
@@ -102,6 +110,13 @@ export function registerResumeRoutes(app: Hono) {
       .update(projects)
       .set({ activeResumeSourceId: documentId })
       .where(eq(projects.id, projectId));
+
+    void startTask({
+      projectId,
+      type: "coach_review",
+      resumeDocId: documentId,
+      focusArea: "Overall resume",
+    }).catch(() => {});
 
     return c.json({ documentId }, 201);
   });

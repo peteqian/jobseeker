@@ -1,5 +1,6 @@
 import type { ChatModelSelection, StartTaskInput } from "@jobseeker/contracts";
 
+import { runCoachReview } from "../coach/review";
 import { runExplorerDiscovery } from "../explorer";
 import { writeProjectRuntimeEvent } from "../runtimeEvents";
 import { buildAndSaveProfile, createQuestionCardsIfMissing } from "./resumeIngest";
@@ -30,6 +31,13 @@ export async function runTask(
 
   if (input.type === "explorer_discovery") {
     return runExplorerDiscoveryTask(input.projectId, taskId, input.modelSelection);
+  }
+
+  if (input.type === "coach_review") {
+    if (!input.resumeDocId) return {};
+    const focusArea = input.focusArea ?? "Overall resume";
+    await runCoachReview(input.projectId, input.resumeDocId, focusArea, input.modelSelection);
+    return {};
   }
 
   if (input.type === "resume_tailoring" || input.type === "cover_letter_tailoring") {

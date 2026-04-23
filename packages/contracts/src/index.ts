@@ -1,4 +1,5 @@
 export * from "./chat";
+export * from "./coach";
 export * from "./chat-rpc";
 export * from "./core";
 export * from "./model";

@@ -265,6 +265,68 @@ export const insightCards = sqliteTable("insight_cards", {
   updatedAt: text("updated_at").notNull(),
 });
 
+export const coachReviews = sqliteTable(
+  "coach_reviews",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    resumeDocId: text("resume_doc_id").notNull(),
+    focusArea: text("focus_area").notNull(),
+    score: real("score").notNull(),
+    issuesCount: integer("issues_count").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [index("idx_coach_reviews_project_created").on(table.projectId, table.createdAt)],
+);
+
+export const coachClaims = sqliteTable("coach_claims", {
+  id: text("id").primaryKey(),
+  reviewId: text("review_id")
+    .notNull()
+    .references(() => coachReviews.id, { onDelete: "cascade" }),
+  text: text("text").notNull(),
+  status: text("status").notNull(),
+  statusReason: text("status_reason").notNull(),
+  createdAt: text("created_at").notNull(),
+});
+
+export const coachSuggestions = sqliteTable("coach_suggestions", {
+  id: text("id").primaryKey(),
+  claimId: text("claim_id")
+    .notNull()
+    .references(() => coachClaims.id, { onDelete: "cascade" }),
+  text: text("text").notNull(),
+  createdAt: text("created_at").notNull(),
+});
+
+export const coachNextSteps = sqliteTable("coach_next_steps", {
+  id: text("id").primaryKey(),
+  reviewId: text("review_id")
+    .notNull()
+    .references(() => coachReviews.id, { onDelete: "cascade" }),
+  text: text("text").notNull(),
+  completed: integer("completed", { mode: "boolean" }).notNull(),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
+export const claimThreads = sqliteTable(
+  "claim_threads",
+  {
+    id: text("id").primaryKey(),
+    claimId: text("claim_id")
+      .notNull()
+      .references(() => coachClaims.id, { onDelete: "cascade" }),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => chatThreads.id, { onDelete: "cascade" }),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [uniqueIndex("uq_claim_threads_claim_thread").on(table.claimId, table.threadId)],
+);
+
 export const events = sqliteTable("events", {
   id: text("id").primaryKey(),
   projectId: text("project_id")
