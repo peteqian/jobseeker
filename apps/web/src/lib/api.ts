@@ -1,5 +1,8 @@
 import type {
   ChatMessage,
+  ClaimThread,
+  CoachNextStep,
+  CoachReview,
   ExplorerConfigRecord,
   ProjectDocument,
   QuestionAnswerMap,
@@ -7,9 +10,12 @@ import type {
   ResumeUploadResult,
   ResumeVersion,
   RuntimeEvent,
+  StartCoachReviewInput,
   StartTaskInput,
   StructuredProfile,
   ProjectSnapshot,
+  TaskRecord,
+  UpdateCoachNextStepInput,
   UpdateQuestionCardInput,
   UpdateExplorerConfigInput,
 } from "@jobseeker/contracts";
@@ -48,6 +54,15 @@ async function post<T>(
     method: "POST",
     headers: options?.formData ? undefined : { "content-type": "application/json" },
     body: options?.formData ?? (body ? JSON.stringify(body) : undefined),
+  });
+  return parseJson<T>(response);
+}
+
+async function patch<T>(path: string, body: unknown): Promise<T> {
+  const response = await fetch(apiUrl(path), {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
   });
   return parseJson<T>(response);
 }
@@ -238,4 +253,28 @@ export async function sendChatMessage(
 
 export async function dismissInsightCard(projectId: string, cardId: string): Promise<void> {
   await del(`/api/projects/${projectId}/insight-cards/${cardId}`);
+}
+
+export async function getCoachReview(projectId: string): Promise<CoachReview | null> {
+  return get<CoachReview | null>(`/api/projects/${projectId}/coach-review`);
+}
+
+export async function startCoachReview(input: StartCoachReviewInput): Promise<TaskRecord> {
+  const { projectId, ...body } = input;
+  return post<TaskRecord>(`/api/projects/${projectId}/coach-review`, body);
+}
+
+export async function updateCoachNextStep(
+  stepId: string,
+  input: UpdateCoachNextStepInput,
+): Promise<CoachNextStep> {
+  return patch<CoachNextStep>(`/api/coach-next-steps/${stepId}`, input);
+}
+
+export async function createClaimThread(claimId: string): Promise<ClaimThread> {
+  return post<ClaimThread>(`/api/coach-claims/${claimId}/threads`, {});
+}
+
+export async function getClaimThreads(claimId: string): Promise<ClaimThread[]> {
+  return get<ClaimThread[]>(`/api/coach-claims/${claimId}/threads`);
 }

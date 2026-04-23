@@ -2,6 +2,8 @@ import { queryOptions } from "@tanstack/react-query";
 import type { ChatScope } from "@jobseeker/contracts";
 
 import {
+  getClaimThreads,
+  getCoachReview,
   getConnections,
   getProject,
   getProjectEvents,
@@ -9,7 +11,7 @@ import {
   getProviderSettings,
   getResumeVersions,
 } from "@/lib/api";
-import { eventsKeys, projectsKeys, settingsKeys } from "@/lib/query-keys";
+import { coachKeys, eventsKeys, projectsKeys, settingsKeys } from "@/lib/query-keys";
 import {
   getMessages,
   getThreadProjection,
@@ -104,6 +106,21 @@ export function chatTopicsQueryOptions(projectId: string) {
   return queryOptions({
     queryKey: chatKeys.topics(projectId),
     queryFn: () => listTopics(projectId),
+  });
+}
+
+export function coachReviewQueryOptions(projectId: string) {
+  return queryOptions({
+    queryKey: coachKeys.review(projectId),
+    queryFn: () => getCoachReview(projectId),
+  });
+}
+
+export function claimThreadsQueryOptions(claimId: string) {
+  return queryOptions({
+    queryKey: coachKeys.claimThreads(claimId),
+    queryFn: () => getClaimThreads(claimId),
+    enabled: Boolean(claimId),
   });
 }
 

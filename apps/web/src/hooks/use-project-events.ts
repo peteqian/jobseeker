@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 
 import { apiUrl, getProjectEvents } from "@/lib/api";
-import { eventsKeys, projectsKeys } from "@/lib/query-keys";
+import { coachKeys, eventsKeys, projectsKeys } from "@/lib/query-keys";
 
 export function useProjectEvents(projectId: string | null) {
   const queryClient = useQueryClient();
@@ -49,6 +49,10 @@ export function useProjectEvents(projectId: string | null) {
       if (event.type !== "task.progress" && event.type !== "task.waiting_for_user") {
         void queryClient.invalidateQueries({ queryKey: projectsKeys.detail(projectId) });
         void queryClient.invalidateQueries({ queryKey: projectsKeys.list() });
+        const payload = event.payload as { taskType?: string } | undefined;
+        if (payload?.taskType === "coach_review") {
+          void queryClient.invalidateQueries({ queryKey: coachKeys.review(projectId) });
+        }
       }
     };
 

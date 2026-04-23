@@ -1,6 +1,9 @@
 import type {
+  CoachNextStep,
+  CoachReview,
   QuestionAnswerMap,
   ResumePasteInput,
+  StartCoachReviewInput,
   StartTaskInput,
   UpdateQuestionCardInput,
   UpdateExplorerConfigInput,
@@ -8,19 +11,22 @@ import type {
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import {
+  createClaimThread,
   createProject as createProjectRequest,
   deleteProjectJob,
   deleteProjectResume,
   pasteProjectResume,
+  startCoachReview,
   startProjectTask,
   submitQuestionAnswers,
   switchActiveResume as switchActiveResumeRequest,
+  updateCoachNextStep,
   updateDocument as updateDocumentRequest,
   updateQuestionCard as updateQuestionCardRequest,
   updateProjectExplorer,
   uploadProjectResume,
 } from "@/lib/api";
-import { projectsKeys } from "@/lib/query-keys";
+import { coachKeys, projectsKeys } from "@/lib/query-keys";
 
 function useProjectMutation<TData, TVariables extends Record<string, unknown>>(options: {
   mutationFn: (variables: TVariables) => Promise<TData>;
@@ -166,6 +172,41 @@ export function useSaveExplorer() {
         projectsKeys.detail(projectId),
         (current) => (current ? { ...current, explorer } : current),
       );
+    },
+  });
+}
+
+export function useStartCoachReview() {
+  return useMutation({
+    mutationFn: (input: StartCoachReviewInput) => startCoachReview(input),
+  });
+}
+
+export function useToggleCoachNextStep(projectId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ stepId, completed }: { stepId: string; completed: boolean }) =>
+      updateCoachNextStep(stepId, { completed }),
+    onSuccess: (step: CoachNextStep) => {
+      queryClient.setQueryData<CoachReview | null>(coachKeys.review(projectId), (current) => {
+        if (!current) return current;
+        return {
+          ...current,
+          nextSteps: current.nextSteps.map((item) => (item.id === step.id ? step : item)),
+        };
+      });
+    },
+  });
+}
+
+export function useCreateClaimThread() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (claimId: string) => createClaimThread(claimId),
+    onSuccess: (_mapping, claimId) => {
+      queryClient.invalidateQueries({ queryKey: coachKeys.claimThreads(claimId) });
     },
   });
 }

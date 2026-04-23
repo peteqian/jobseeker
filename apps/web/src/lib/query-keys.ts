@@ -19,6 +19,11 @@ export const chatKeys = {
   topic: (projectId: string, topicId: string) => ["chat", "topic", projectId, topicId] as const,
 };
 
+export const coachKeys = {
+  review: (projectId: string) => ["coach", "review", projectId] as const,
+  claimThreads: (claimId: string) => ["coach", "claim-threads", claimId] as const,
+};
+
 export const eventsKeys = {
   all: () => ["events", "all"] as const,
   project: (projectId: string) => ["events", "project", projectId] as const,

@@ -5,12 +5,12 @@ import { Link, createFileRoute } from "@tanstack/react-router";
 import { Button } from "@/components/ui/button";
 import { buttonVariants } from "@/components/ui/button-variants";
 import { ChatPanel } from "@/components/chat/chat-panel";
-import { TopicArtifactPanel } from "@/components/chat/topic-artifact-panel";
 import { useModelChoice } from "@/hooks/use-model-choice";
 import { appendThreadToCache } from "@/lib/chat-cache";
 import {
   chatThreadsQueryOptions,
   chatTopicsQueryOptions,
+  coachReviewQueryOptions,
   projectsListQueryOptions,
 } from "@/lib/query-options";
 import { projectsKeys } from "@/lib/query-keys";
@@ -20,7 +20,11 @@ import { useChat } from "@/hooks/use-chat";
 import { useShellHeaderMeta } from "@/providers/shell-header-context";
 import { useProjectStore } from "@/stores/project-store";
 import { createThread } from "@/rpc/chat-client";
+import { useCreateClaimThread, useToggleCoachNextStep } from "@/hooks/use-project-mutations";
+import { FocusAreaCard } from "./projects.$projectId.coach/-focus-area-card";
+import { NextStepsCard } from "./projects.$projectId.coach/-next-steps-card";
 import { ResumeBanner } from "./projects.$projectId.coach/-resume-banner";
+import { RightRail } from "./projects.$projectId.coach/-right-rail";
 import { SessionSidebar } from "./projects.$projectId.coach/-session-sidebar";
 
 const EMPTY_THREADS: ChatThread[] = [];
@@ -37,6 +41,7 @@ export const Route = createFileRoute("/projects/$projectId/coach")({
     await Promise.all([
       context.queryClient.ensureQueryData(chatThreadsQueryOptions(project.project.id, "coach")),
       context.queryClient.ensureQueryData(chatTopicsQueryOptions(project.project.id)),
+      context.queryClient.ensureQueryData(coachReviewQueryOptions(project.project.id)),
     ]);
   },
   component: ChatPage,
@@ -61,12 +66,23 @@ function ChatPage() {
 
   const { providers, selection, setSelection } = useModelChoice(projectId, "coach");
   const threads = useQuery(chatThreadsQueryOptions(projectId, "coach")).data ?? EMPTY_THREADS;
+  const review = useQuery(coachReviewQueryOptions(projectId)).data ?? null;
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [showSessions, setShowSessions] = useState(true);
+  const [selectedClaimId, setSelectedClaimId] = useState<string | null>(null);
+
+  const createClaimThread = useCreateClaimThread();
+  const toggleNextStep = useToggleCoachNextStep(projectId);
 
   useEffect(() => {
     setActiveThreadId((current) => current ?? threads[0]?.id ?? null);
   }, [threads]);
+
+  useEffect(() => {
+    if (selectedClaimId === null && review?.claims[0]) {
+      setSelectedClaimId(review.claims[0].id);
+    }
+  }, [review, selectedClaimId]);
 
   const handleComplete = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: projectsKeys.detail(projectId) });
@@ -88,6 +104,19 @@ function ChatPage() {
     setActiveThreadId(created.id);
   }
 
+  async function handleSelectClaim(claimId: string) {
+    setSelectedClaimId(claimId);
+    try {
+      const mapping = await createClaimThread.mutateAsync(claimId);
+      setActiveThreadId(mapping.threadId);
+      await queryClient.invalidateQueries({ queryKey: ["chat", "threads", projectId, "coach"] });
+    } catch (err) {
+      console.error("Failed to open claim thread", err);
+    }
+  }
+
+  const selectedClaim = review?.claims.find((c) => c.id === selectedClaimId) ?? null;
+
   if (!project) {
     return (
       <div className="rounded-lg bg-muted/30 p-6 text-sm text-muted-foreground">
@@ -96,7 +125,6 @@ function ChatPage() {
     );
   }
 
-  // No resume uploaded yet
   if (!resumeDoc) {
     return (
       <section className="rounded-lg bg-card p-6 shadow-sm">
@@ -138,9 +166,18 @@ function ChatPage() {
         expanded={showSessions}
       />
 
-      {/* Chat area */}
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-w-0 flex-1 flex-col gap-3 overflow-y-auto">
         <ResumeBanner resumeDoc={resumeDoc} activeThread={activeThread} projectSlug={projectSlug} />
+
+        {review ? (
+          <FocusAreaCard
+            review={review}
+            selectedClaimId={selectedClaimId}
+            onSelectClaim={(claimId) => void handleSelectClaim(claimId)}
+          />
+        ) : (
+          <PendingReviewCard />
+        )}
 
         <ChatPanel
           messages={messages}
@@ -152,12 +189,31 @@ function ChatPage() {
           providers={providers}
           selection={selection}
           onSelectionChange={setSelection}
-          className="min-h-0 flex-1"
+          className="min-h-[320px] flex-1"
         />
+
+        {review ? (
+          <NextStepsCard
+            steps={review.nextSteps}
+            onToggle={(stepId, completed) => toggleNextStep.mutate({ stepId, completed })}
+          />
+        ) : null}
       </div>
 
-      {/* Topic artifact panel */}
-      <TopicArtifactPanel projectId={projectId} initialTopics={project.topicFiles} />
+      <RightRail
+        projectId={projectId}
+        initialTopics={project.topicFiles}
+        selectedClaim={selectedClaim}
+        suggestions={review?.suggestions ?? []}
+      />
+    </div>
+  );
+}
+
+function PendingReviewCard() {
+  return (
+    <div className="rounded-lg border border-dashed bg-muted/30 p-4 text-sm text-muted-foreground">
+      Coach review running… this updates automatically when your resume finishes analyzing.
     </div>
   );
 }
