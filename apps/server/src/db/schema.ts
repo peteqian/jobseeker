@@ -327,6 +327,44 @@ export const claimThreads = sqliteTable(
   (table) => [uniqueIndex("uq_claim_threads_claim_thread").on(table.claimId, table.threadId)],
 );
 
+export const coachGaps = sqliteTable("coach_gaps", {
+  id: text("id").primaryKey(),
+  reviewId: text("review_id")
+    .notNull()
+    .references(() => coachReviews.id, { onDelete: "cascade" }),
+  topic: text("topic").notNull(),
+  evidenceSummary: text("evidence_summary").notNull(),
+  discussionSeed: text("discussion_seed").notNull(),
+  severity: text("severity").notNull(),
+  createdAt: text("created_at").notNull(),
+});
+
+export const coachReviewJds = sqliteTable("coach_review_jds", {
+  id: text("id").primaryKey(),
+  reviewId: text("review_id")
+    .notNull()
+    .references(() => coachReviews.id, { onDelete: "cascade" }),
+  source: text("source").notNull(),
+  text: text("text").notNull(),
+  createdAt: text("created_at").notNull(),
+});
+
+export const coachThreadAnchors = sqliteTable(
+  "coach_thread_anchors",
+  {
+    id: text("id").primaryKey(),
+    anchorType: text("anchor_type").notNull(),
+    anchorId: text("anchor_id").notNull(),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => chatThreads.id, { onDelete: "cascade" }),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("uq_coach_thread_anchors").on(table.anchorType, table.anchorId, table.threadId),
+  ],
+);
+
 export const events = sqliteTable("events", {
   id: text("id").primaryKey(),
   projectId: text("project_id")

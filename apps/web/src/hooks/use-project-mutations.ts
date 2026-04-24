@@ -1,4 +1,5 @@
 import type {
+  CoachAnchorType,
   CoachNextStep,
   CoachReview,
   QuestionAnswerMap,
@@ -11,7 +12,7 @@ import type {
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import {
-  createClaimThread,
+  createCoachAnchorThread,
   createProject as createProjectRequest,
   deleteProjectJob,
   deleteProjectResume,
@@ -182,6 +183,26 @@ export function useStartCoachReview() {
   });
 }
 
+export function useStartDeepCoachReview() {
+  return useMutation({
+    mutationFn: (input: {
+      projectId: string;
+      resumeDocId: string;
+      pastedJds: string[];
+      useExplorer: boolean;
+      focusArea?: string;
+    }) =>
+      startCoachReview({
+        projectId: input.projectId,
+        resumeDocId: input.resumeDocId,
+        focusArea: input.focusArea,
+        deep: true,
+        pastedJds: input.pastedJds,
+        useExplorer: input.useExplorer,
+      }),
+  });
+}
+
 export function useToggleCoachNextStep(projectId: string) {
   const queryClient = useQueryClient();
 
@@ -200,13 +221,16 @@ export function useToggleCoachNextStep(projectId: string) {
   });
 }
 
-export function useCreateClaimThread() {
+export function useCreateCoachAnchorThread() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (claimId: string) => createClaimThread(claimId),
-    onSuccess: (_mapping, claimId) => {
-      queryClient.invalidateQueries({ queryKey: coachKeys.claimThreads(claimId) });
+    mutationFn: ({ anchorType, anchorId }: { anchorType: CoachAnchorType; anchorId: string }) =>
+      createCoachAnchorThread(anchorType, anchorId),
+    onSuccess: (_mapping, { anchorType, anchorId }) => {
+      queryClient.invalidateQueries({
+        queryKey: coachKeys.anchorThreads(anchorType, anchorId),
+      });
     },
   });
 }

@@ -1,13 +1,23 @@
-import { AlertTriangle, CheckCircle2, Sparkles } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Sparkles, Wand2 } from "lucide-react";
 import type { CoachClaim, CoachClaimStatus, CoachReview } from "@jobseeker/contracts";
+
+import { Button } from "@/components/ui/button";
 
 interface FocusAreaCardProps {
   review: CoachReview;
   selectedClaimId: string | null;
   onSelectClaim: (claimId: string) => void;
+  onRunDeepReview: () => void;
+  deepRunning: boolean;
 }
 
-export function FocusAreaCard({ review, selectedClaimId, onSelectClaim }: FocusAreaCardProps) {
+export function FocusAreaCard({
+  review,
+  selectedClaimId,
+  onSelectClaim,
+  onRunDeepReview,
+  deepRunning,
+}: FocusAreaCardProps) {
   return (
     <section className="rounded-lg border bg-card p-4 shadow-sm">
       <header className="flex items-start justify-between gap-3">
@@ -25,6 +35,10 @@ export function FocusAreaCard({ review, selectedClaimId, onSelectClaim }: FocusA
               {review.issuesCount} issue{review.issuesCount === 1 ? "" : "s"}
             </span>
           ) : null}
+          <Button size="sm" variant="outline" onClick={onRunDeepReview} disabled={deepRunning}>
+            <Wand2 className="mr-1 size-4" />
+            {deepRunning ? "Running…" : "Deep review"}
+          </Button>
         </div>
       </header>
 

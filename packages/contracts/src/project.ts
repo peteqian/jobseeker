@@ -124,6 +124,9 @@ export interface StartTaskInput {
   jobId?: string;
   resumeDocId?: string;
   focusArea?: string;
+  deepReview?: boolean;
+  pastedJds?: string[];
+  useExplorer?: boolean;
   modelSelection?: import("./model").ChatModelSelection;
 }
 

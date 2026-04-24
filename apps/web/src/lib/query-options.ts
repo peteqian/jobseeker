@@ -1,8 +1,10 @@
 import { queryOptions } from "@tanstack/react-query";
 import type { ChatScope } from "@jobseeker/contracts";
 
+import type { CoachAnchorType } from "@jobseeker/contracts";
+
 import {
-  getClaimThreads,
+  getCoachAnchorThreads,
   getCoachReview,
   getConnections,
   getProject,
@@ -116,11 +118,11 @@ export function coachReviewQueryOptions(projectId: string) {
   });
 }
 
-export function claimThreadsQueryOptions(claimId: string) {
+export function coachAnchorThreadsQueryOptions(anchorType: CoachAnchorType, anchorId: string) {
   return queryOptions({
-    queryKey: coachKeys.claimThreads(claimId),
-    queryFn: () => getClaimThreads(claimId),
-    enabled: Boolean(claimId),
+    queryKey: coachKeys.anchorThreads(anchorType, anchorId),
+    queryFn: () => getCoachAnchorThreads(anchorType, anchorId),
+    enabled: Boolean(anchorId),
   });
 }
 

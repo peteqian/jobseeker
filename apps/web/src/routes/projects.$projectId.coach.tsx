@@ -20,11 +20,17 @@ import { useChat } from "@/hooks/use-chat";
 import { useShellHeaderMeta } from "@/providers/shell-header-context";
 import { useProjectStore } from "@/stores/project-store";
 import { createThread } from "@/rpc/chat-client";
-import { useCreateClaimThread, useToggleCoachNextStep } from "@/hooks/use-project-mutations";
+import {
+  useCreateCoachAnchorThread,
+  useStartDeepCoachReview,
+  useToggleCoachNextStep,
+} from "@/hooks/use-project-mutations";
+import { coachKeys } from "@/lib/query-keys";
 import { FocusAreaCard } from "./projects.$projectId.coach/-focus-area-card";
 import { NextStepsCard } from "./projects.$projectId.coach/-next-steps-card";
 import { ResumeBanner } from "./projects.$projectId.coach/-resume-banner";
 import { RightRail } from "./projects.$projectId.coach/-right-rail";
+import { RunDeepReviewModal } from "./projects.$projectId.coach/-run-deep-review-modal";
 import { SessionSidebar } from "./projects.$projectId.coach/-session-sidebar";
 
 const EMPTY_THREADS: ChatThread[] = [];
@@ -71,8 +77,11 @@ function ChatPage() {
   const [showSessions, setShowSessions] = useState(true);
   const [selectedClaimId, setSelectedClaimId] = useState<string | null>(null);
 
-  const createClaimThread = useCreateClaimThread();
+  const createAnchorThread = useCreateCoachAnchorThread();
   const toggleNextStep = useToggleCoachNextStep(projectId);
+  const startDeepReview = useStartDeepCoachReview();
+  const [deepModalOpen, setDeepModalOpen] = useState(false);
+  const [pendingGapId, setPendingGapId] = useState<string | null>(null);
 
   useEffect(() => {
     setActiveThreadId((current) => current ?? threads[0]?.id ?? null);
@@ -107,11 +116,46 @@ function ChatPage() {
   async function handleSelectClaim(claimId: string) {
     setSelectedClaimId(claimId);
     try {
-      const mapping = await createClaimThread.mutateAsync(claimId);
+      const mapping = await createAnchorThread.mutateAsync({
+        anchorType: "claim",
+        anchorId: claimId,
+      });
       setActiveThreadId(mapping.threadId);
       await queryClient.invalidateQueries({ queryKey: ["chat", "threads", projectId, "coach"] });
     } catch (err) {
       console.error("Failed to open claim thread", err);
+    }
+  }
+
+  async function handleStartGapChat(gapId: string) {
+    setPendingGapId(gapId);
+    try {
+      const mapping = await createAnchorThread.mutateAsync({
+        anchorType: "gap",
+        anchorId: gapId,
+      });
+      setActiveThreadId(mapping.threadId);
+      await queryClient.invalidateQueries({ queryKey: ["chat", "threads", projectId, "coach"] });
+    } catch (err) {
+      console.error("Failed to open gap thread", err);
+    } finally {
+      setPendingGapId(null);
+    }
+  }
+
+  async function handleDeepReviewSubmit(input: { pastedJds: string[]; useExplorer: boolean }) {
+    if (!resumeDoc) return;
+    try {
+      await startDeepReview.mutateAsync({
+        projectId,
+        resumeDocId: resumeDoc.id,
+        pastedJds: input.pastedJds,
+        useExplorer: input.useExplorer,
+      });
+      setDeepModalOpen(false);
+      void queryClient.invalidateQueries({ queryKey: coachKeys.review(projectId) });
+    } catch (err) {
+      console.error("Failed to start deep review", err);
     }
   }
 
@@ -174,6 +218,8 @@ function ChatPage() {
             review={review}
             selectedClaimId={selectedClaimId}
             onSelectClaim={(claimId) => void handleSelectClaim(claimId)}
+            onRunDeepReview={() => setDeepModalOpen(true)}
+            deepRunning={startDeepReview.isPending}
           />
         ) : (
           <PendingReviewCard />
@@ -205,6 +251,16 @@ function ChatPage() {
         initialTopics={project.topicFiles}
         selectedClaim={selectedClaim}
         suggestions={review?.suggestions ?? []}
+        gaps={review?.gaps ?? []}
+        onStartGapChat={(gapId) => void handleStartGapChat(gapId)}
+        pendingGapId={pendingGapId}
+      />
+
+      <RunDeepReviewModal
+        open={deepModalOpen}
+        onOpenChange={setDeepModalOpen}
+        onSubmit={handleDeepReviewSubmit}
+        submitting={startDeepReview.isPending}
       />
     </div>
   );

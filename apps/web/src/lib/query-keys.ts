@@ -21,7 +21,8 @@ export const chatKeys = {
 
 export const coachKeys = {
   review: (projectId: string) => ["coach", "review", projectId] as const,
-  claimThreads: (claimId: string) => ["coach", "claim-threads", claimId] as const,
+  anchorThreads: (anchorType: string, anchorId: string) =>
+    ["coach", "anchor-threads", anchorType, anchorId] as const,
 };
 
 export const eventsKeys = {

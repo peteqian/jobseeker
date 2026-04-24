@@ -1,18 +1,34 @@
 import { desc, eq } from "drizzle-orm";
 import type {
   ChatModelSelection,
+  CoachAnchorType,
   CoachClaim,
   CoachClaimStatus,
+  CoachGap,
+  CoachGapSeverity,
   CoachNextStep,
   CoachReview,
   CoachSuggestion,
 } from "@jobseeker/contracts";
 
 import { db } from "../../db";
-import { coachClaims, coachNextSteps, coachReviews, coachSuggestions } from "../../db/schema";
+import {
+  coachClaims,
+  coachGaps,
+  coachNextSteps,
+  coachReviewJds,
+  coachReviews,
+  coachSuggestions,
+  jobs,
+} from "../../db/schema";
 import { env } from "../../env";
 import { makeId } from "../../lib/ids";
-import { buildCoachReviewUserMessage, COACH_REVIEW_SYSTEM_PROMPT } from "../../prompts/coach";
+import {
+  buildCoachDeepReviewUserMessage,
+  buildCoachReviewUserMessage,
+  COACH_DEEP_REVIEW_SYSTEM_PROMPT,
+  COACH_REVIEW_SYSTEM_PROMPT,
+} from "../../prompts/coach";
 import { getProjectResumeText } from "../projects/resume";
 
 interface RawClaim {
@@ -22,34 +38,111 @@ interface RawClaim {
   suggestions?: string[];
 }
 
+interface RawGap {
+  topic: string;
+  evidenceSummary: string;
+  discussionSeed: string;
+  severity: CoachGapSeverity;
+}
+
 interface RawReview {
   focusArea: string;
   score: number;
   claims: RawClaim[];
   nextSteps: string[];
+  gaps?: RawGap[];
 }
 
-export async function runCoachReview(
-  projectId: string,
-  resumeDocId: string,
-  focusArea: string,
-  _modelSelection?: ChatModelSelection,
-): Promise<CoachReview | null> {
-  const resumeText = await getProjectResumeText(projectId);
+interface AssembledJd {
+  source: "paste" | "explorer";
+  text: string;
+}
+
+export interface RunCoachReviewOptions {
+  projectId: string;
+  resumeDocId: string;
+  focusArea: string;
+  deep?: boolean;
+  pastedJds?: string[];
+  useExplorer?: boolean;
+  modelSelection?: ChatModelSelection;
+}
+
+/**
+ * Runs a coach review.
+ *
+ * Basic mode: resume-only critique with claims + suggestions + next steps.
+ * Deep mode: grounds the critique in target job descriptions (pasted by the
+ * user and/or pulled from the project's explorer corpus). Deep mode also
+ * returns a gaps[] with discussion seeds for the coach chat.
+ */
+export async function runCoachReview(options: RunCoachReviewOptions): Promise<CoachReview | null> {
+  const resumeText = await getProjectResumeText(options.projectId);
   if (!resumeText) return null;
 
-  const raw = await callCoachModel(resumeText, focusArea);
-  if (!raw) return null;
+  if (options.deep) {
+    const jds = await assembleJds(options.projectId, options.pastedJds, options.useExplorer);
+    const raw = await callDeepModel(resumeText, jds, options.focusArea);
+    if (!raw) return null;
+    return persistReview(options.projectId, options.resumeDocId, raw, jds);
+  }
 
-  return persistReview(projectId, resumeDocId, raw);
+  const raw = await callBasicModel(resumeText, options.focusArea);
+  if (!raw) return null;
+  return persistReview(options.projectId, options.resumeDocId, raw, []);
 }
 
-async function callCoachModel(resumeText: string, focusArea: string): Promise<RawReview | null> {
+async function assembleJds(
+  projectId: string,
+  pastedJds: string[] | undefined,
+  useExplorer: boolean | undefined,
+): Promise<AssembledJd[]> {
+  const out: AssembledJd[] = [];
+
+  for (const text of pastedJds ?? []) {
+    const trimmed = text.trim();
+    if (trimmed) out.push({ source: "paste", text: trimmed });
+  }
+
+  if (useExplorer) {
+    const rows = await db
+      .select()
+      .from(jobs)
+      .where(eq(jobs.projectId, projectId))
+      .orderBy(desc(jobs.createdAt))
+      .limit(5)
+      .all();
+    for (const row of rows) {
+      const text = `${row.title} @ ${row.company}\n\n${row.summary}`;
+      out.push({ source: "explorer", text });
+    }
+  }
+
+  return out;
+}
+
+async function callBasicModel(resumeText: string, focusArea: string): Promise<RawReview | null> {
   const prompt = `${COACH_REVIEW_SYSTEM_PROMPT}\n\n${buildCoachReviewUserMessage(
     resumeText,
     focusArea,
   )}`;
+  return runPrompt(prompt);
+}
 
+async function callDeepModel(
+  resumeText: string,
+  jds: AssembledJd[],
+  focusArea: string,
+): Promise<RawReview | null> {
+  const prompt = `${COACH_DEEP_REVIEW_SYSTEM_PROMPT}\n\n${buildCoachDeepReviewUserMessage(
+    resumeText,
+    jds,
+    focusArea,
+  )}`;
+  return runPrompt(prompt);
+}
+
+async function runPrompt(prompt: string): Promise<RawReview | null> {
   const codexResult = await tryCodex(prompt);
   if (codexResult) return codexResult;
 
@@ -132,6 +225,7 @@ async function persistReview(
   projectId: string,
   resumeDocId: string,
   raw: RawReview,
+  jds: AssembledJd[],
 ): Promise<CoachReview> {
   const timestamp = new Date().toISOString();
   const reviewId = makeId("creview");
@@ -199,6 +293,32 @@ async function persistReview(
     await db.insert(coachNextSteps).values(nextSteps);
   }
 
+  const gaps: CoachGap[] = (raw.gaps ?? []).map((g) => ({
+    id: makeId("cgap"),
+    reviewId,
+    topic: g.topic,
+    evidenceSummary: g.evidenceSummary,
+    discussionSeed: g.discussionSeed,
+    severity: g.severity,
+    createdAt: timestamp,
+  }));
+
+  if (gaps.length > 0) {
+    await db.insert(coachGaps).values(gaps);
+  }
+
+  if (jds.length > 0) {
+    await db.insert(coachReviewJds).values(
+      jds.map((jd) => ({
+        id: makeId("cjd"),
+        reviewId,
+        source: jd.source,
+        text: jd.text,
+        createdAt: timestamp,
+      })),
+    );
+  }
+
   return {
     id: reviewId,
     projectId,
@@ -210,6 +330,7 @@ async function persistReview(
     claims,
     suggestions,
     nextSteps,
+    gaps,
   };
 }
 
@@ -270,6 +391,18 @@ export async function getLatestCoachReview(projectId: string): Promise<CoachRevi
     updatedAt: row.updatedAt,
   }));
 
+  const gapRows = await db.select().from(coachGaps).where(eq(coachGaps.reviewId, review.id)).all();
+
+  const gaps: CoachGap[] = gapRows.map((row) => ({
+    id: row.id,
+    reviewId: row.reviewId,
+    topic: row.topic,
+    evidenceSummary: row.evidenceSummary,
+    discussionSeed: row.discussionSeed,
+    severity: row.severity as CoachGapSeverity,
+    createdAt: row.createdAt,
+  }));
+
   return {
     id: review.id,
     projectId: review.projectId,
@@ -281,6 +414,7 @@ export async function getLatestCoachReview(projectId: string): Promise<CoachRevi
     claims,
     suggestions,
     nextSteps,
+    gaps,
   };
 }
 
@@ -304,3 +438,5 @@ export async function setCoachNextStepCompleted(
     updatedAt: row.updatedAt,
   };
 }
+
+export type { CoachAnchorType };

@@ -1,8 +1,9 @@
 import type {
   ChatMessage,
-  ClaimThread,
+  CoachAnchorType,
   CoachNextStep,
   CoachReview,
+  CoachThreadAnchor,
   ExplorerConfigRecord,
   ProjectDocument,
   QuestionAnswerMap,
@@ -271,10 +272,16 @@ export async function updateCoachNextStep(
   return patch<CoachNextStep>(`/api/coach-next-steps/${stepId}`, input);
 }
 
-export async function createClaimThread(claimId: string): Promise<ClaimThread> {
-  return post<ClaimThread>(`/api/coach-claims/${claimId}/threads`, {});
+export async function createCoachAnchorThread(
+  anchorType: CoachAnchorType,
+  anchorId: string,
+): Promise<CoachThreadAnchor> {
+  return post<CoachThreadAnchor>(`/api/coach-anchors/${anchorType}/${anchorId}/threads`, {});
 }
 
-export async function getClaimThreads(claimId: string): Promise<ClaimThread[]> {
-  return get<ClaimThread[]>(`/api/coach-claims/${claimId}/threads`);
+export async function getCoachAnchorThreads(
+  anchorType: CoachAnchorType,
+  anchorId: string,
+): Promise<CoachThreadAnchor[]> {
+  return get<CoachThreadAnchor[]>(`/api/coach-anchors/${anchorType}/${anchorId}/threads`);
 }

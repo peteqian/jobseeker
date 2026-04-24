@@ -36,7 +36,15 @@ export async function runTask(
   if (input.type === "coach_review") {
     if (!input.resumeDocId) return {};
     const focusArea = input.focusArea ?? "Overall resume";
-    await runCoachReview(input.projectId, input.resumeDocId, focusArea, input.modelSelection);
+    await runCoachReview({
+      projectId: input.projectId,
+      resumeDocId: input.resumeDocId,
+      focusArea,
+      deep: input.deepReview,
+      pastedJds: input.pastedJds,
+      useExplorer: input.useExplorer,
+      modelSelection: input.modelSelection,
+    });
     return {};
   }
 

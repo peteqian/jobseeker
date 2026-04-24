@@ -36,19 +36,44 @@ export interface CoachReview {
   claims: CoachClaim[];
   suggestions: CoachSuggestion[];
   nextSteps: CoachNextStep[];
+  gaps: CoachGap[];
 }
 
-export interface ClaimThread {
+export type CoachGapSeverity = "high" | "med" | "low";
+
+export interface CoachGap {
   id: string;
-  claimId: string;
+  reviewId: string;
+  topic: string;
+  evidenceSummary: string;
+  discussionSeed: string;
+  severity: CoachGapSeverity;
+  createdAt: string;
+}
+
+export type CoachAnchorType = "claim" | "gap";
+
+export interface CoachThreadAnchor {
+  id: string;
+  anchorType: CoachAnchorType;
+  anchorId: string;
   threadId: string;
   createdAt: string;
 }
+
+/**
+ * @deprecated use CoachThreadAnchor with anchorType="claim".
+ * Kept only to avoid breaking imports during transition.
+ */
+export type ClaimThread = CoachThreadAnchor;
 
 export interface StartCoachReviewInput {
   projectId: string;
   resumeDocId: string;
   focusArea?: string;
+  deep?: boolean;
+  pastedJds?: string[];
+  useExplorer?: boolean;
 }
 
 export interface UpdateCoachNextStepInput {

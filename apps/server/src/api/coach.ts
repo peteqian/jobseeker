@@ -1,13 +1,21 @@
 import { Hono } from "hono";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import type {
-  ClaimThread,
+  CoachAnchorType,
+  CoachGap,
+  CoachThreadAnchor,
   StartCoachReviewInput,
   UpdateCoachNextStepInput,
 } from "@jobseeker/contracts";
 
 import { db } from "../db";
-import { chatThreads, claimThreads, coachClaims, coachReviews } from "../db/schema";
+import {
+  chatThreads,
+  coachClaims,
+  coachGaps,
+  coachReviews,
+  coachThreadAnchors,
+} from "../db/schema";
 import { makeId } from "../lib/ids";
 import { getLatestCoachReview, setCoachNextStepCompleted } from "../services/coach/review";
 import { startTask } from "../services/tasks/startTask";
@@ -29,6 +37,9 @@ export function registerCoachRoutes(app: Hono) {
       type: "coach_review",
       resumeDocId: body.resumeDocId,
       focusArea: body.focusArea,
+      deepReview: body.deep,
+      pastedJds: body.pastedJds,
+      useExplorer: body.useExplorer,
     });
     return c.json(task, 202);
   });
@@ -40,67 +51,114 @@ export function registerCoachRoutes(app: Hono) {
     return c.json(step);
   });
 
-  app.post("/api/coach-claims/:claimId/threads", async (c) => {
-    const claimId = c.req.param("claimId");
-    const claim = await db.select().from(coachClaims).where(eq(coachClaims.id, claimId)).get();
-    if (!claim) return c.json({ error: "claim not found" }, 404);
+  app.post("/api/coach-anchors/:anchorType/:anchorId/threads", async (c) => {
+    const anchorType = c.req.param("anchorType") as CoachAnchorType;
+    const anchorId = c.req.param("anchorId");
 
-    const review = await db
-      .select()
-      .from(coachReviews)
-      .where(eq(coachReviews.id, claim.reviewId))
-      .get();
-    if (!review) return c.json({ error: "review not found" }, 404);
+    const resolved = await resolveAnchorProject(anchorType, anchorId);
+    if (!resolved) return c.json({ error: "anchor not found" }, 404);
 
     const existing = await db
       .select()
-      .from(claimThreads)
-      .where(eq(claimThreads.claimId, claimId))
-      .orderBy(desc(claimThreads.createdAt))
+      .from(coachThreadAnchors)
+      .where(
+        and(
+          eq(coachThreadAnchors.anchorType, anchorType),
+          eq(coachThreadAnchors.anchorId, anchorId),
+        ),
+      )
+      .orderBy(desc(coachThreadAnchors.createdAt))
       .limit(1)
       .get();
-    if (existing) {
-      return c.json(toClaimThread(existing));
-    }
+    if (existing) return c.json(toAnchor(existing));
 
     const timestamp = now();
     const threadId = makeId("thread");
     await db.insert(chatThreads).values({
       id: threadId,
-      projectId: review.projectId,
+      projectId: resolved.projectId,
       scope: "coach",
-      title: claim.text.slice(0, 80),
+      title: resolved.title.slice(0, 80),
       status: "active",
       createdAt: timestamp,
       updatedAt: timestamp,
     });
 
     const mappingId = makeId("cthread");
-    await db.insert(claimThreads).values({
+    await db.insert(coachThreadAnchors).values({
       id: mappingId,
-      claimId,
+      anchorType,
+      anchorId,
       threadId,
       createdAt: timestamp,
     });
 
-    return c.json<ClaimThread>({ id: mappingId, claimId, threadId, createdAt: timestamp }, 201);
+    return c.json<CoachThreadAnchor>(
+      { id: mappingId, anchorType, anchorId, threadId, createdAt: timestamp },
+      201,
+    );
   });
 
-  app.get("/api/coach-claims/:claimId/threads", async (c) => {
+  app.get("/api/coach-anchors/:anchorType/:anchorId/threads", async (c) => {
+    const anchorType = c.req.param("anchorType") as CoachAnchorType;
+    const anchorId = c.req.param("anchorId");
     const rows = await db
       .select()
-      .from(claimThreads)
-      .where(eq(claimThreads.claimId, c.req.param("claimId")))
+      .from(coachThreadAnchors)
+      .where(
+        and(
+          eq(coachThreadAnchors.anchorType, anchorType),
+          eq(coachThreadAnchors.anchorId, anchorId),
+        ),
+      )
       .all();
-    return c.json(rows.map(toClaimThread));
+    return c.json(rows.map(toAnchor));
   });
 }
 
-function toClaimThread(row: {
+async function resolveAnchorProject(
+  anchorType: CoachAnchorType,
+  anchorId: string,
+): Promise<{ projectId: string; title: string } | null> {
+  if (anchorType === "claim") {
+    const claim = await db.select().from(coachClaims).where(eq(coachClaims.id, anchorId)).get();
+    if (!claim) return null;
+    const review = await db
+      .select()
+      .from(coachReviews)
+      .where(eq(coachReviews.id, claim.reviewId))
+      .get();
+    if (!review) return null;
+    return { projectId: review.projectId, title: claim.text };
+  }
+  if (anchorType === "gap") {
+    const gap = (await db.select().from(coachGaps).where(eq(coachGaps.id, anchorId)).get()) as
+      | CoachGap
+      | undefined;
+    if (!gap) return null;
+    const review = await db
+      .select()
+      .from(coachReviews)
+      .where(eq(coachReviews.id, gap.reviewId))
+      .get();
+    if (!review) return null;
+    return { projectId: review.projectId, title: gap.topic };
+  }
+  return null;
+}
+
+function toAnchor(row: {
   id: string;
-  claimId: string;
+  anchorType: string;
+  anchorId: string;
   threadId: string;
   createdAt: string;
-}): ClaimThread {
-  return { id: row.id, claimId: row.claimId, threadId: row.threadId, createdAt: row.createdAt };
+}): CoachThreadAnchor {
+  return {
+    id: row.id,
+    anchorType: row.anchorType as CoachAnchorType,
+    anchorId: row.anchorId,
+    threadId: row.threadId,
+    createdAt: row.createdAt,
+  };
 }
