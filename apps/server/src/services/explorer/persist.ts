@@ -1,5 +1,5 @@
 import { and, eq, lt, sql } from "drizzle-orm";
-import type { FoundJob } from "@jobseeker/browser-agent";
+import type { FoundJob } from "./jobTypes";
 import type { JobMatch, StructuredProfile } from "@jobseeker/contracts";
 
 import { db } from "../../db";

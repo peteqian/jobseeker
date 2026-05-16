@@ -1,5 +1,5 @@
 import { and, desc, eq, ne, sql } from "drizzle-orm";
-import type { DistilledTrajectory, Extractor, TrajectoryStep } from "@jobseeker/browser-agent";
+import type { DistilledTrajectory, Extractor, TrajectoryStep } from "./jobTypes";
 
 import { db } from "../../db";
 import { pageMemory } from "../../db/schema";

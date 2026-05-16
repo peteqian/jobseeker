@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import type { FoundJob } from "@jobseeker/browser-agent";
+import type { FoundJob } from "./explorer/jobTypes";
 import {
   deriveNavigationContext,
   deriveSearchIntent,

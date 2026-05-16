@@ -1,5 +1,5 @@
 import type { ChatModelSelection } from "@jobseeker/contracts";
-import type { FoundJob } from "@jobseeker/browser-agent";
+import type { FoundJob } from "./jobTypes";
 
 export interface ExplorerProgress {
   phase: "query_started" | "query_finished" | "crawl_step" | "codex_raw" | "job_found";

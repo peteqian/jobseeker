@@ -1,12 +1,9 @@
 import path from "node:path";
 import { z } from "zod";
-import {
-  BrowserSession,
-  buildDecisionPrompt,
-  runAgent,
-  type Decision,
-  type FoundJob,
-} from "@jobseeker/browser-agent";
+import { BrowserSession, runAgent, type Decision } from "@browser-agent/core";
+import { buildDecisionPrompt } from "@browser-agent/core/internal";
+
+import type { DistilledTrajectory, FoundJob } from "./jobTypes";
 import type { ExplorerFreshness, NavigationContext } from "@jobseeker/contracts";
 
 import { dataDir } from "../../env";
@@ -173,6 +170,7 @@ export async function findJobsForQuery(input: {
       if (input.signal.aborted) {
         return {
           success: false,
+          reason: "aborted" as const,
           summary: "Aborted before fingerprint.",
           data: null,
           steps: 0,
@@ -203,6 +201,7 @@ export async function findJobsForQuery(input: {
           await recordPageMemorySuccess(memory.id, replayResult.jobs.slice(0, 3));
           return {
             success: true,
+            reason: "completed" as const,
             summary: `Replayed trajectory ${memory.id}.`,
             data: null,
             steps: 0,
@@ -293,6 +292,45 @@ export async function findJobsForQuery(input: {
             raw: clipRawCodexOutput(finalResponse),
             retry,
           });
+
+          const jobs = extractFoundJobs(parsed);
+          if (jobs.length > 0) {
+            for (const job of jobs) {
+              if (input.signal.aborted) break;
+              await input.onFoundJob?.(job);
+            }
+          }
+
+          const trajectory = extractDistilledTrajectory(parsed);
+          if (trajectory && !input.signal.aborted) {
+            const validated = await validateTrajectoryOnFreshSession({
+              trajectory,
+              query: input.query,
+              startUrl: url,
+              signal: input.signal,
+            });
+            if (validated.success) {
+              await savePageMemory({
+                fingerprint: landingFingerprint,
+                urlPattern,
+                trajectory,
+                sampleJobs: validated.jobs.slice(0, 3),
+              });
+              logInfo("explorer saved page memory", {
+                domain: input.domain,
+                query: input.query,
+                fingerprint: landingFingerprint,
+                sampleJobs: validated.jobs.length,
+              });
+            } else {
+              logWarn("explorer distilled trajectory validation failed", {
+                domain: input.domain,
+                query: input.query,
+                reason: validated.reason,
+              });
+            }
+          }
+
           return normalizeDecision(parsed);
         },
         onStep: (step) => {
@@ -322,41 +360,6 @@ export async function findJobsForQuery(input: {
             retry,
           });
         },
-        onFoundJobs: async (jobs) => {
-          for (const job of jobs) {
-            if (input.signal.aborted) break;
-            await input.onFoundJob?.(job);
-          }
-        },
-        onDistilledTrajectory: async (trajectory) => {
-          if (input.signal.aborted) return;
-          const validated = await validateTrajectoryOnFreshSession({
-            trajectory,
-            query: input.query,
-            startUrl: url,
-            signal: input.signal,
-          });
-          if (!validated.success) {
-            logWarn("explorer distilled trajectory validation failed", {
-              domain: input.domain,
-              query: input.query,
-              reason: validated.reason,
-            });
-            return;
-          }
-          await savePageMemory({
-            fingerprint: landingFingerprint,
-            urlPattern,
-            trajectory,
-            sampleJobs: validated.jobs.slice(0, 3),
-          });
-          logInfo("explorer saved page memory", {
-            domain: input.domain,
-            query: input.query,
-            fingerprint: landingFingerprint,
-            sampleJobs: validated.jobs.length,
-          });
-        },
       });
     } finally {
       await session.close().catch(() => {});
@@ -368,7 +371,13 @@ export async function findJobsForQuery(input: {
   try {
     let result = await runOnce(getLaunchOptions(pairSlug), false);
 
-    if (!result.success && isBotInterstitial(result.summary) && !input.signal.aborted) {
+    if (
+      !result.success &&
+      result.reason !== "aborted" &&
+      result.reason !== "stopped" &&
+      isBotInterstitial(result.summary) &&
+      !input.signal.aborted
+    ) {
       logWarn("explorer query retry after anti-bot interstitial", {
         domain: input.domain,
         query: input.query,
@@ -476,31 +485,38 @@ function normalizeDecision(parsed: z.infer<typeof DECISION_WIRE_SCHEMA>): Decisi
   return {
     thought: parsed.thought ?? undefined,
     actions: parsed.actions,
-    foundJobs:
-      parsed.foundJobs.length > 0
-        ? parsed.foundJobs.map((job) => ({
-            ...job,
-            salary: job.salary ?? undefined,
-          }))
-        : undefined,
-    distilledTrajectory: parsed.distilledTrajectory
-      ? {
-          actions: parsed.distilledTrajectory.actions,
-          extractor: {
-            listingSelector: parsed.distilledTrajectory.extractor.listingSelector,
-            fields: Object.fromEntries(
-              parsed.distilledTrajectory.extractor.fields.map((entry) => [
-                entry.name,
-                entry.attr !== null
-                  ? { selector: entry.selector, attr: entry.attr }
-                  : { selector: entry.selector },
-              ]),
-            ),
-          },
-        }
-      : undefined,
     done: parsed.done,
     summary: parsed.summary ?? undefined,
     success: parsed.success ?? undefined,
+  };
+}
+
+/** Lifts foundJobs from the explorer wire schema into the canonical FoundJob shape. */
+function extractFoundJobs(parsed: z.infer<typeof DECISION_WIRE_SCHEMA>): FoundJob[] {
+  if (parsed.foundJobs.length === 0) return [];
+  return parsed.foundJobs.map((job) => ({
+    ...job,
+    salary: job.salary ?? undefined,
+  }));
+}
+
+/** Lifts distilledTrajectory from the explorer wire schema into the canonical shape. */
+function extractDistilledTrajectory(
+  parsed: z.infer<typeof DECISION_WIRE_SCHEMA>,
+): DistilledTrajectory | undefined {
+  if (!parsed.distilledTrajectory) return undefined;
+  return {
+    actions: parsed.distilledTrajectory.actions,
+    extractor: {
+      listingSelector: parsed.distilledTrajectory.extractor.listingSelector,
+      fields: Object.fromEntries(
+        parsed.distilledTrajectory.extractor.fields.map((entry) => [
+          entry.name,
+          entry.attr !== null
+            ? { selector: entry.selector, attr: entry.attr }
+            : { selector: entry.selector },
+        ]),
+      ),
+    },
   };
 }

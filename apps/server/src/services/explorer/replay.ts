@@ -1,10 +1,6 @@
-import type {
-  DistilledTrajectory,
-  Extractor,
-  FoundJob,
-  Page,
-  TrajectoryStep,
-} from "@jobseeker/browser-agent";
+import type { Page } from "@browser-agent/core";
+
+import type { DistilledTrajectory, Extractor, FoundJob, TrajectoryStep } from "./jobTypes";
 
 // Minimum fraction of listings that must have title+url populated for a replay
 // result to count as a pass. Below this we treat the trajectory as drifted and
