@@ -70,7 +70,31 @@ export interface ConfigTabProps {
   onOpenSettings: () => void;
 }
 
-export interface ConfigureRunTabProps extends ConfigTabProps, ManageTabProps {}
+export interface ConfigureRunTabProps extends ConfigTabProps {
+  sessions: ChatThread[];
+  activeThreadId: string | null;
+  onSelectSession: (threadId: string) => void;
+  logs: ExplorerRawLogLine[];
+  feed: ExplorerFeedItem[];
+  isRunning: boolean;
+}
+
+export interface SessionTabProps {
+  activeThreadId: string | null;
+  latestRunThreadId: string | null;
+  onSelectLatestRun: () => void;
+  logs: ExplorerRawLogLine[];
+  isRunning: boolean;
+  debugProviders: ReturnType<typeof useModelChoice>["providers"];
+  debugSelection: ChatModelSelection | undefined;
+  onDebugSelectionChange: (selection: ChatModelSelection) => void;
+  debugMessages: ChatMessage[];
+  debugStreamingContent: string;
+  debugIsStreaming: boolean;
+  debugError: string | null;
+  onSendDebugMessage: (content: string) => void;
+  onInterruptDebugMessage: () => void;
+}
 
 export interface DomainConfigFormProps {
   config: ExplorerDomainConfig;

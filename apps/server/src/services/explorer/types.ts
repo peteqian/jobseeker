@@ -2,7 +2,13 @@ import type { ChatModelSelection } from "@jobseeker/contracts";
 import type { FoundJob } from "./jobTypes";
 
 export interface ExplorerProgress {
-  phase: "query_started" | "query_finished" | "crawl_step" | "codex_raw" | "job_found";
+  phase:
+    | "query_started"
+    | "query_finished"
+    | "crawl_step"
+    | "codex_raw"
+    | "codex_event"
+    | "job_found";
   domain: string;
   query: string;
   currentQuery: number;
@@ -22,6 +28,10 @@ export interface ExplorerProgress {
   score?: number;
   reasons?: string[];
   gaps?: string[];
+  /** Codex SDK event kind when phase === "codex_event" (e.g. reasoning, web_search). */
+  eventKind?: string;
+  /** Compact text payload for codex_event (reasoning summary, command, query, etc.). */
+  eventText?: string;
 }
 
 export interface ExplorerRunOptions {
