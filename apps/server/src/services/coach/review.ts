@@ -21,7 +21,6 @@ import {
   coachSuggestions,
   jobs,
 } from "../../db/schema";
-import { env } from "../../env";
 import { makeId } from "../../lib/ids";
 import {
   buildCoachDeepReviewUserMessage,
@@ -29,6 +28,7 @@ import {
   COACH_DEEP_REVIEW_SYSTEM_PROMPT,
   COACH_REVIEW_SYSTEM_PROMPT,
 } from "../../prompts/coach";
+import { parseJsonResponse, runOneShotPrompt } from "../llm/oneShotPrompt";
 import { getProjectResumeText } from "../projects/resume";
 
 interface RawClaim {
@@ -122,11 +122,12 @@ async function assembleJds(
 }
 
 async function callBasicModel(resumeText: string, focusArea: string): Promise<RawReview | null> {
-  const prompt = `${COACH_REVIEW_SYSTEM_PROMPT}\n\n${buildCoachReviewUserMessage(
-    resumeText,
-    focusArea,
-  )}`;
-  return runPrompt(prompt);
+  const text = await runOneShotPrompt({
+    label: "coach_review",
+    systemPrompt: COACH_REVIEW_SYSTEM_PROMPT,
+    prompt: buildCoachReviewUserMessage(resumeText, focusArea),
+  });
+  return text ? parseJsonResponse<RawReview>(text, "coach_review") : null;
 }
 
 async function callDeepModel(
@@ -134,91 +135,12 @@ async function callDeepModel(
   jds: AssembledJd[],
   focusArea: string,
 ): Promise<RawReview | null> {
-  const prompt = `${COACH_DEEP_REVIEW_SYSTEM_PROMPT}\n\n${buildCoachDeepReviewUserMessage(
-    resumeText,
-    jds,
-    focusArea,
-  )}`;
-  return runPrompt(prompt);
-}
-
-async function runPrompt(prompt: string): Promise<RawReview | null> {
-  const codexResult = await tryCodex(prompt);
-  if (codexResult) return codexResult;
-
-  const claudeResult = await tryClaude(prompt);
-  if (claudeResult) return claudeResult;
-
-  return null;
-}
-
-async function tryCodex(prompt: string): Promise<RawReview | null> {
-  const binPath = process.env.CODEX_BIN ?? "codex";
-
-  try {
-    const versionProc = Bun.spawnSync([binPath, "--version"], { stdout: "pipe", stderr: "pipe" });
-    if (versionProc.exitCode !== 0) return null;
-  } catch {
-    return null;
-  }
-
-  try {
-    const args = [binPath, "exec", "--ephemeral", "-s", "read-only", "-"];
-    const proc = Bun.spawn(args, { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
-
-    proc.stdin.write(new TextEncoder().encode(prompt));
-    proc.stdin.end();
-
-    const timeoutMs = 2 * 60 * 1000;
-    const stdoutPromise = new Response(proc.stdout).text();
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(() => {
-        proc.kill();
-        reject(new Error(`Coach review codex timed out after ${timeoutMs}ms`));
-      }, timeoutMs);
-    });
-
-    const stdout = await Promise.race([stdoutPromise, timeoutPromise]);
-    const exitCode = await proc.exited;
-    if (exitCode !== 0) return null;
-
-    return parseReview(stdout);
-  } catch (error) {
-    console.error("Coach review via codex failed:", error);
-    return null;
-  }
-}
-
-async function tryClaude(prompt: string): Promise<RawReview | null> {
-  if (!env.ANTHROPIC_API_KEY) return null;
-
-  try {
-    const { default: Anthropic } = await import("@anthropic-ai/sdk");
-    const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
-    const response = await client.messages.create({
-      model: "claude-sonnet-4-6-20250514",
-      max_tokens: 4096,
-      messages: [{ role: "user", content: prompt }],
-    });
-    const text = response.content[0].type === "text" ? response.content[0].text : "";
-    return parseReview(text);
-  } catch (error) {
-    console.error("Coach review via Claude failed:", error);
-    return null;
-  }
-}
-
-function parseReview(text: string): RawReview | null {
-  let cleaned = text.trim();
-  if (cleaned.startsWith("```")) {
-    cleaned = cleaned.replace(/^```(?:json)?\s*\n?/, "").replace(/\n?```\s*$/, "");
-  }
-  try {
-    return JSON.parse(cleaned) as RawReview;
-  } catch (error) {
-    console.error("Coach review JSON parse failed:", error);
-    return null;
-  }
+  const text = await runOneShotPrompt({
+    label: "coach_deep_review",
+    systemPrompt: COACH_DEEP_REVIEW_SYSTEM_PROMPT,
+    prompt: buildCoachDeepReviewUserMessage(resumeText, jds, focusArea),
+  });
+  return text ? parseJsonResponse<RawReview>(text, "coach_deep_review") : null;
 }
 
 async function persistReview(
