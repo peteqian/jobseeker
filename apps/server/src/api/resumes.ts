@@ -44,6 +44,8 @@ export function registerResumeRoutes(app: Hono) {
     const projectId = c.req.param("projectId");
     const formData = await c.req.formData();
     const file = formData.get("file");
+    const runAts = formData.get("runAtsAnalysis") !== "false";
+    const runHr = formData.get("runHrAnalysis") !== "false";
 
     if (!(file instanceof File)) {
       return c.json({ error: "Resume file is required." }, 400);
@@ -73,22 +75,51 @@ export function registerResumeRoutes(app: Hono) {
 
     void startTask({
       projectId,
+      type: "resume_ingest",
+      resumeDocId: documentId,
+    }).catch(() => {});
+
+    void startTask({
+      projectId,
       type: "coach_review",
       resumeDocId: documentId,
       focusArea: "Overall resume",
     }).catch(() => {});
+
+    if (runAts) {
+      void startTask({
+        projectId,
+        type: "ats_analysis",
+        resumeDocId: documentId,
+      }).catch(() => {});
+    }
+
+    if (runHr) {
+      void startTask({
+        projectId,
+        type: "hr_analysis",
+        resumeDocId: documentId,
+      }).catch(() => {});
+    }
 
     return c.json({ documentId, name: file.name }, 201);
   });
 
   app.post("/api/projects/:projectId/resume/paste", async (c) => {
     const projectId = c.req.param("projectId");
-    const input = (await c.req.json()) as { text?: string; name?: string };
+    const input = (await c.req.json()) as {
+      text?: string;
+      name?: string;
+      runAtsAnalysis?: boolean;
+      runHrAnalysis?: boolean;
+    };
 
     if (!input.text?.trim()) {
       return c.json({ error: "Resume text is required." }, 400);
     }
 
+    const runAts = input.runAtsAnalysis !== false;
+    const runHr = input.runHrAnalysis !== false;
     const timestamp = now();
     const documentId = makeId("doc");
     const content = input.text.trim();
@@ -113,10 +144,32 @@ export function registerResumeRoutes(app: Hono) {
 
     void startTask({
       projectId,
+      type: "resume_ingest",
+      resumeDocId: documentId,
+    }).catch(() => {});
+
+    void startTask({
+      projectId,
       type: "coach_review",
       resumeDocId: documentId,
       focusArea: "Overall resume",
     }).catch(() => {});
+
+    if (runAts) {
+      void startTask({
+        projectId,
+        type: "ats_analysis",
+        resumeDocId: documentId,
+      }).catch(() => {});
+    }
+
+    if (runHr) {
+      void startTask({
+        projectId,
+        type: "hr_analysis",
+        resumeDocId: documentId,
+      }).catch(() => {});
+    }
 
     return c.json({ documentId }, 201);
   });

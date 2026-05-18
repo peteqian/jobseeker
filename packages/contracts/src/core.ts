@@ -6,7 +6,9 @@ export type TaskType =
   | "job_discovery"
   | "resume_tailoring"
   | "cover_letter_tailoring"
-  | "coach_review";
+  | "coach_review"
+  | "ats_analysis"
+  | "hr_analysis";
 
 export type TaskStatus =
   | "queued"
