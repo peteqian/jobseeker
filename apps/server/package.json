@@ -23,7 +23,7 @@
     "@jobseeker/contracts": "workspace:*",
     "@openai/codex-sdk": "^0.130.0",
     "@opencode-ai/sdk": "^1.14.18",
-    "@peteqian/browser-agent-sdk": "workspace:*",
+    "@peteqian/browser-agent-sdk": "^0.1.0",
     "drizzle-orm": "^0.45.2",
     "effect": "4.0.0-beta.45",
     "hono": "^4.10.1",

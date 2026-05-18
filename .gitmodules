@@ -1,3 +1,0 @@
-[submodule "packages/browser-agent"]
-	path = packages/browser-agent
-	url = https://github.com/peteqian/agent-browser.git

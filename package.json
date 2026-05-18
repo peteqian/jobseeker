@@ -4,8 +4,7 @@
   "private": true,
   "workspaces": [
     "apps/*",
-    "packages/*",
-    "packages/browser-agent/packages/*"
+    "packages/*"
   ],
   "scripts": {
     "build": "turbo build",
