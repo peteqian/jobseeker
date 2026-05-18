@@ -5,7 +5,20 @@
     "moduleResolution": "bundler",
     "baseUrl": ".",
     "paths": {
-      "@jobseeker/contracts": ["./packages/contracts/src/index.ts"]
+      "@jobseeker/contracts": ["./packages/contracts/src/index.ts"],
+      "@jobseeker/contracts-runtime": ["./packages/contracts-runtime/src/index.ts"],
+      "effect-codex-app-server/client": ["./packages/effect-codex-app-server/src/client.ts"],
+      "effect-codex-app-server/errors": ["./packages/effect-codex-app-server/src/errors.ts"],
+      "effect-codex-app-server/rpc": ["./packages/effect-codex-app-server/src/rpc.ts"],
+      "effect-codex-app-server/schema": ["./packages/effect-codex-app-server/src/schema.ts"],
+      "effect-codex-app-server/protocol": ["./packages/effect-codex-app-server/src/protocol.ts"],
+      "effect-acp/client": ["./packages/effect-acp/src/client.ts"],
+      "effect-acp/agent": ["./packages/effect-acp/src/agent.ts"],
+      "effect-acp/schema": ["./packages/effect-acp/src/schema.ts"],
+      "effect-acp/rpc": ["./packages/effect-acp/src/rpc.ts"],
+      "effect-acp/protocol": ["./packages/effect-acp/src/protocol.ts"],
+      "effect-acp/terminal": ["./packages/effect-acp/src/terminal.ts"],
+      "effect-acp/errors": ["./packages/effect-acp/src/errors.ts"]
     },
     "skipLibCheck": true,
     "strict": true

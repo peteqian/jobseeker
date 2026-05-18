@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import type { ProviderOption } from "@/components/chat/provider-model-picker";
-import { listProviders, type ChatProviderResponse } from "@/rpc/chat-client";
+import { chatProvidersQueryOptions } from "@/lib/query-options";
+import type { ChatProviderResponse } from "@/rpc/chat-client";
 import { useModelChoiceStore } from "@/stores/model-choice-store";
 import type { ChatModelSelection, ProviderId } from "@jobseeker/contracts";
 
@@ -92,11 +93,7 @@ export function useModelChoice(projectId: string, scope: ModelChoiceScope) {
   const setChoice = useModelChoiceStore((state) => state.setChoice);
   const hasHydrated = useModelChoiceStore((state) => state.hasHydrated);
 
-  const providersQuery = useQuery({
-    queryKey: ["chat", "providers"],
-    queryFn: listProviders,
-    staleTime: 60_000,
-  });
+  const providersQuery = useQuery(chatProvidersQueryOptions());
 
   const providers = useMemo(
     () =>

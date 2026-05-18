@@ -26,8 +26,9 @@ import {
   TableRow,
 } from "@/components/ui/table";
 
-import { useJobseeker } from "@/providers/jobseeker-hooks";
 import { useShellHeaderMeta } from "@/providers/shell-header-context";
+import { projectsListQueryOptions } from "@/lib/query-options";
+import { useQuery } from "@tanstack/react-query";
 import type { ProjectDocument, ProjectDocumentKind } from "@jobseeker/contracts";
 
 interface DocumentRow {
@@ -54,7 +55,7 @@ const DOCUMENTS_HEADER = {
 
 function DocumentsPage() {
   useShellHeaderMeta(DOCUMENTS_HEADER);
-  const { projects } = useJobseeker();
+  const { data: projects = [] } = useQuery(projectsListQueryOptions());
   const [sorting, setSorting] = useState<SortingState>([{ id: "createdAt", desc: true }]);
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
   const [rowSelection, setRowSelection] = useState<Record<string, boolean>>({});

@@ -1,9 +1,16 @@
-import type { ChatMessage, TopicFileMeta } from "@jobseeker/contracts";
+import type { ChatMessage, TopicFile, TopicFileMeta } from "@jobseeker/contracts";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import {
+  appendMessageToCache,
+  patchThreadUpdatedAt,
+  setProjectionInCache,
+  setTopicInCache,
+  upsertTopicMetaInCache,
+} from "@/lib/chat-cache";
+import { chatMessagesQueryOptions, chatProjectionQueryOptions } from "@/lib/query-options";
 import { dispatchCommand as rpcDispatchCommand } from "@/rpc/chat-client";
-import { getMessages as rpcGetMessages } from "@/rpc/chat-client";
-import { getThreadProjection as rpcGetThreadProjection } from "@/rpc/chat-client";
 import { subscribeThread as rpcSubscribeThread } from "@/rpc/chat-client";
 import type {
   ChatStreamTopicUpdate,
@@ -34,6 +41,8 @@ interface UseChatReturn {
   interrupt: () => void;
 }
 
+const EMPTY_MESSAGES: ChatMessage[] = [];
+
 function makeCommandId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return crypto.randomUUID();
@@ -51,56 +60,58 @@ function makeSessionId(): string {
 export function useChat(options: UseChatOptions): UseChatReturn {
   const { projectId, threadId, selection, onTopicUpdate, onTopicUpdates, onComplete } = options;
 
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [streamingContent, setStreamingContent] = useState("");
-  const [isStreaming, setIsStreaming] = useState(false);
+  const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
   const lastSequenceRef = useRef(0);
   const sessionIdRef = useRef(makeSessionId());
+  const callbacksRef = useRef({ onTopicUpdate, onTopicUpdates, onComplete });
+
+  callbacksRef.current = { onTopicUpdate, onTopicUpdates, onComplete };
+
+  const messages =
+    useQuery({ ...chatMessagesQueryOptions(threadId), enabled: Boolean(threadId) }).data ??
+    EMPTY_MESSAGES;
+  const projection = useQuery({
+    ...chatProjectionQueryOptions(threadId),
+    enabled: Boolean(threadId),
+  }).data;
+  const streamingContent = projection?.assistantDraft ?? "";
+  const isStreaming = projection?.isStreaming ?? false;
+
+  const patchThreadSummary = useCallback(
+    (updatedAt: string) => patchThreadUpdatedAt(queryClient, projectId, threadId, updatedAt),
+    [projectId, queryClient, threadId],
+  );
+
+  const upsertTopicMeta = useCallback(
+    (topic: TopicFileMeta) => upsertTopicMetaInCache(queryClient, projectId, topic),
+    [projectId, queryClient],
+  );
 
   useEffect(() => {
-    let cancelled = false;
-    setMessages([]);
-    setStreamingContent("");
-    setIsStreaming(false);
     setError(null);
     lastSequenceRef.current = 0;
 
     if (!threadId) {
-      return () => {
-        cancelled = true;
-      };
+      return;
     }
 
-    void rpcGetMessages(threadId)
-      .then((loaded) => {
-        if (!cancelled) {
-          setMessages(loaded);
-        }
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Failed to load messages");
-        }
-      });
+    void queryClient
+      .ensureQueryData(chatMessagesQueryOptions(threadId))
+      .catch((err) => setError(err instanceof Error ? err.message : "Failed to load messages"));
 
-    void rpcGetThreadProjection(threadId)
-      .then((projection) => {
-        if (cancelled) {
-          return;
-        }
-        lastSequenceRef.current = projection.latestSequence;
-        setIsStreaming(projection.isStreaming);
-        setStreamingContent(projection.assistantDraft);
-      })
-      .catch(() => {
-        // Ignore projection bootstrap failures.
-      });
+    void queryClient.ensureQueryData(chatProjectionQueryOptions(threadId)).catch(() => {
+      // Ignore projection bootstrap failures.
+    });
+  }, [queryClient, threadId]);
 
-    return () => {
-      cancelled = true;
-    };
-  }, [threadId]);
+  useEffect(() => {
+    if (!projection) {
+      return;
+    }
+
+    lastSequenceRef.current = projection.latestSequence;
+  }, [projection]);
 
   useEffect(() => {
     let cancelled = false;
@@ -117,12 +128,29 @@ export function useChat(options: UseChatOptions): UseChatReturn {
       const event = envelope.event as ThreadStreamEvent;
 
       if (event.type === "delta") {
-        setStreamingContent((prev) => prev + event.chunk);
+        setProjectionInCache(queryClient, threadId, envelope.sequence, {
+          assistantDraft: `${projection?.assistantDraft ?? ""}${event.chunk}`,
+          isStreaming: true,
+          updatedAt: envelope.createdAt,
+        });
+        patchThreadSummary(envelope.createdAt);
         return;
       }
 
       if (event.type === "topicUpdate") {
-        onTopicUpdate?.(event);
+        const topic: TopicFile = {
+          id: event.topicId,
+          projectId,
+          slug: event.slug,
+          title: event.title,
+          status: event.status,
+          createdAt: envelope.createdAt,
+          updatedAt: envelope.createdAt,
+          content: event.content,
+        };
+
+        setTopicInCache(queryClient, projectId, topic);
+        callbacksRef.current.onTopicUpdate?.(event);
         return;
       }
 
@@ -133,20 +161,25 @@ export function useChat(options: UseChatOptions): UseChatReturn {
           threadId,
           role: "assistant",
           content: event.content,
-          createdAt: new Date().toISOString(),
+          createdAt: envelope.createdAt,
         };
 
-        setMessages((prev) =>
-          prev.some((message) => message.id === assistantMsg.id) ? prev : [...prev, assistantMsg],
-        );
-        setStreamingContent("");
-        setIsStreaming(false);
+        appendMessageToCache(queryClient, threadId, assistantMsg);
+        setProjectionInCache(queryClient, threadId, envelope.sequence, {
+          assistantDraft: "",
+          isStreaming: false,
+          updatedAt: envelope.createdAt,
+        });
+        patchThreadSummary(envelope.createdAt);
 
         if (event.topicUpdates.length > 0) {
-          onTopicUpdates?.(event.topicUpdates as TopicFileMeta[]);
+          for (const topic of event.topicUpdates) {
+            upsertTopicMeta(topic);
+          }
+          callbacksRef.current.onTopicUpdates?.(event.topicUpdates as TopicFileMeta[]);
         }
 
-        onComplete?.();
+        callbacksRef.current.onComplete?.();
         return;
       }
 
@@ -155,7 +188,11 @@ export function useChat(options: UseChatOptions): UseChatReturn {
       }
 
       if (event.type === "turn.started") {
-        setIsStreaming(true);
+        setProjectionInCache(queryClient, threadId, envelope.sequence, {
+          isStreaming: true,
+          updatedAt: envelope.createdAt,
+        });
+        patchThreadSummary(envelope.createdAt);
         return;
       }
 
@@ -164,7 +201,11 @@ export function useChat(options: UseChatOptions): UseChatReturn {
         event.type === "turn.failed" ||
         event.type === "turn.interrupted"
       ) {
-        setIsStreaming(false);
+        setProjectionInCache(queryClient, threadId, envelope.sequence, {
+          isStreaming: false,
+          updatedAt: envelope.createdAt,
+        });
+        patchThreadSummary(envelope.createdAt);
       }
     };
 
@@ -200,7 +241,14 @@ export function useChat(options: UseChatOptions): UseChatReturn {
         clearTimeout(retryTimer);
       }
     };
-  }, [projectId, threadId, onTopicUpdate, onTopicUpdates, onComplete]);
+  }, [
+    patchThreadSummary,
+    projectId,
+    projection?.assistantDraft,
+    queryClient,
+    threadId,
+    upsertTopicMeta,
+  ]);
 
   const send = useCallback(
     (content: string) => {
@@ -208,9 +256,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
       if (!trimmed || isStreaming || !threadId) return;
 
       setError(null);
-      setIsStreaming(true);
 
-      // Optimistically add user message
       const userMsg: ChatMessage = {
         id: `temp_${Date.now()}`,
         projectId,
@@ -220,8 +266,13 @@ export function useChat(options: UseChatOptions): UseChatReturn {
         createdAt: new Date().toISOString(),
       };
 
-      setMessages((prev) => [...prev, userMsg]);
-      setStreamingContent("");
+      appendMessageToCache(queryClient, threadId, userMsg);
+      setProjectionInCache(queryClient, threadId, lastSequenceRef.current, {
+        assistantDraft: "",
+        isStreaming: true,
+        updatedAt: userMsg.createdAt,
+      });
+      patchThreadSummary(userMsg.createdAt);
 
       const command: ThreadDispatchCommand = {
         commandId: makeCommandId(),
@@ -237,10 +288,12 @@ export function useChat(options: UseChatOptions): UseChatReturn {
       void rpcDispatchCommand(command).catch((err) => {
         const msg = err instanceof Error ? err.message : "Failed to send message";
         setError(msg);
-        setIsStreaming(false);
+        setProjectionInCache(queryClient, threadId, lastSequenceRef.current, {
+          isStreaming: false,
+        });
       });
     },
-    [projectId, threadId, selection, isStreaming],
+    [isStreaming, patchThreadSummary, projectId, queryClient, selection, threadId],
   );
 
   const interrupt = useCallback(() => {
@@ -262,7 +315,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
       const msg = err instanceof Error ? err.message : "Failed to interrupt message";
       setError(msg);
     });
-  }, [threadId, isStreaming]);
+  }, [isStreaming, threadId]);
 
   return { messages, streamingContent, isStreaming, error, send, interrupt };
 }

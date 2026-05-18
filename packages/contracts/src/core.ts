@@ -4,7 +4,9 @@ export type TaskType =
   | "resume_ingest"
   | "explorer_discovery"
   | "job_discovery"
-  | "resume_tailoring";
+  | "resume_tailoring"
+  | "cover_letter_tailoring"
+  | "coach_review";
 
 export type TaskStatus =
   | "queued"
@@ -14,7 +16,11 @@ export type TaskStatus =
   | "failed"
   | "interrupted";
 
-export type ProjectDocumentKind = "resume_source" | "extracted_text" | "tailored_resume";
+export type ProjectDocumentKind =
+  | "resume_source"
+  | "extracted_text"
+  | "tailored_resume"
+  | "cover_letter";
 
 export type RuntimeEventType =
   | "project.created"

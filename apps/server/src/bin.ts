@@ -10,6 +10,7 @@ import { registerQuestionRoutes } from "./api/questions";
 import { registerExplorerRoutes } from "./api/explorer";
 import { registerTaskRoutes } from "./api/tasks";
 import { registerEventRoutes } from "./api/events";
+import { registerCoachRoutes } from "./api/coach";
 import { logError, logInfo } from "./lib/log";
 import { runMigrations } from "./db/migrate";
 import { startWsServer } from "./ws";
@@ -54,6 +55,7 @@ registerQuestionRoutes(app);
 registerExplorerRoutes(app);
 registerTaskRoutes(app);
 registerEventRoutes(app);
+registerCoachRoutes(app);
 
 logInfo("http server boot", {
   host: env.HOST,
@@ -67,6 +69,7 @@ const server = Bun.serve({
   fetch: app.fetch,
   hostname: env.HOST,
   port: env.PORT,
+  idleTimeout: 0,
 });
 
 logInfo("http server listening", {

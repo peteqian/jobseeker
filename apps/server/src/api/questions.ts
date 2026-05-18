@@ -17,7 +17,8 @@ import {
 } from "../services/questions";
 import { db } from "../db";
 import { profiles, questionAnswers, questionCards, questions } from "../db/schema";
-import { readProjectSnapshot, writeProfileFile } from "./projects";
+import { writeProfileFile } from "../services/projects/profile";
+import { buildProjectSnapshot } from "../services/projects/snapshot";
 
 const now = () => new Date().toISOString();
 
@@ -69,7 +70,7 @@ export function registerQuestionRoutes(app: Hono) {
       })
       .where(eq(questionCards.id, cardId));
 
-    const snapshot = await readProjectSnapshot(projectId);
+    const snapshot = await buildProjectSnapshot(projectId);
     if (!snapshot) {
       return c.json({ error: "Project not found." }, 404);
     }
@@ -81,7 +82,7 @@ export function registerQuestionRoutes(app: Hono) {
     const projectId = c.req.param("projectId");
     const payload = (await c.req.json()) as Omit<QuestionAnswerInput, "projectId">;
 
-    const snapshot = await readProjectSnapshot(projectId);
+    const snapshot = await buildProjectSnapshot(projectId);
     if (!snapshot) {
       return c.json({ error: "Project not found." }, 404);
     }
@@ -156,7 +157,7 @@ export function registerQuestionRoutes(app: Hono) {
 
     await db.delete(questions).where(eq(questions.projectId, projectId));
 
-    const nextSnapshot = await readProjectSnapshot(projectId);
+    const nextSnapshot = await buildProjectSnapshot(projectId);
     if (!nextSnapshot) {
       return c.json({ error: "Project not found." }, 404);
     }
@@ -169,6 +170,10 @@ export function registerQuestionRoutes(app: Hono) {
 // Question answer helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * Converts raw answer payloads into normalized per-field records ready for
+ * insertion and profile-memory updates.
+ */
 function normalizeQuestionAnswers(
   projectId: string,
   pendingQuestions: PendingQuestion[],

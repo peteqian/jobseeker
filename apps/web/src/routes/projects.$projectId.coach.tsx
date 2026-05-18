@@ -1,34 +1,64 @@
-import type { ChatThread, TopicFileMeta } from "@jobseeker/contracts";
+import type { ChatThread } from "@jobseeker/contracts";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, createFileRoute } from "@tanstack/react-router";
-import { MessageSquarePlus, PanelLeftClose, PanelLeftOpen } from "lucide-react";
-
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { buttonVariants } from "@/components/ui/button-variants";
 import { ChatPanel } from "@/components/chat/chat-panel";
-import { TopicArtifactPanel } from "@/components/chat/topic-artifact-panel";
-
 import { useModelChoice } from "@/hooks/use-model-choice";
+import { appendThreadToCache } from "@/lib/chat-cache";
+import {
+  chatThreadsQueryOptions,
+  chatTopicsQueryOptions,
+  coachReviewQueryOptions,
+  projectsListQueryOptions,
+} from "@/lib/query-options";
+import { projectsKeys } from "@/lib/query-keys";
 import { projectRouteId } from "@/lib/project-route";
-import type { ChatStreamTopicUpdate } from "@/rpc/types";
 import { getResumeDoc } from "@/lib/project";
 import { useChat } from "@/hooks/use-chat";
-import { useJobseeker } from "@/providers/jobseeker-hooks";
 import { useShellHeaderMeta } from "@/providers/shell-header-context";
-import { useProject } from "@/providers/project-context";
-import { createThread, listThreads } from "@/rpc/chat-client";
+import { useProjectStore } from "@/stores/project-store";
+import { createThread } from "@/rpc/chat-client";
+import {
+  useCreateCoachAnchorThread,
+  useStartDeepCoachReview,
+  useToggleCoachNextStep,
+} from "@/hooks/use-project-mutations";
+import { coachKeys } from "@/lib/query-keys";
+import { FocusAreaCard } from "./projects.$projectId.coach/-focus-area-card";
+import { NextStepsCard } from "./projects.$projectId.coach/-next-steps-card";
+import { ResumeBanner } from "./projects.$projectId.coach/-resume-banner";
+import { RightRail } from "./projects.$projectId.coach/-right-rail";
+import { RunDeepReviewModal } from "./projects.$projectId.coach/-run-deep-review-modal";
+import { SessionSidebar } from "./projects.$projectId.coach/-session-sidebar";
+
+const EMPTY_THREADS: ChatThread[] = [];
 
 export const Route = createFileRoute("/projects/$projectId/coach")({
+  loader: async ({ context, params }) => {
+    const projects = await context.queryClient.ensureQueryData(projectsListQueryOptions());
+    const project = projects.find((entry) => projectRouteId(entry) === params.projectId);
+
+    if (!project) {
+      return;
+    }
+
+    await Promise.all([
+      context.queryClient.ensureQueryData(chatThreadsQueryOptions(project.project.id, "coach")),
+      context.queryClient.ensureQueryData(chatTopicsQueryOptions(project.project.id)),
+      context.queryClient.ensureQueryData(coachReviewQueryOptions(project.project.id)),
+    ]);
+  },
   component: ChatPage,
 });
 
 function ChatPage() {
-  const { project } = useProject();
-  const { refreshProjects } = useJobseeker();
-  const resumeDoc = getResumeDoc(project);
-  const projectId = project.project.id;
-  const projectSlug = projectRouteId(project);
+  const project = useProjectStore((state) => state.currentProject);
+  const queryClient = useQueryClient();
+  const resumeDoc = project ? getResumeDoc(project) : null;
+  const projectId = project?.project.id ?? "";
+  const projectSlug = project ? projectRouteId(project) : "";
 
   const shellHeader = useMemo(
     () => ({
@@ -41,72 +71,32 @@ function ChatPage() {
   useShellHeaderMeta(shellHeader);
 
   const { providers, selection, setSelection } = useModelChoice(projectId, "coach");
-  const [threads, setThreads] = useState<ChatThread[]>([]);
+  const threads = useQuery(chatThreadsQueryOptions(projectId, "coach")).data ?? EMPTY_THREADS;
+  const review = useQuery(coachReviewQueryOptions(projectId)).data ?? null;
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [showSessions, setShowSessions] = useState(true);
+  const [selectedClaimId, setSelectedClaimId] = useState<string | null>(null);
+
+  const createAnchorThread = useCreateCoachAnchorThread();
+  const toggleNextStep = useToggleCoachNextStep(projectId);
+  const startDeepReview = useStartDeepCoachReview();
+  const [deepModalOpen, setDeepModalOpen] = useState(false);
+  const [pendingGapId, setPendingGapId] = useState<string | null>(null);
 
   useEffect(() => {
-    let cancelled = false;
-    void listThreads(projectId, "coach").then((rows) => {
-      if (cancelled) return;
-      setThreads(rows);
-      setActiveThreadId((current) => current ?? rows[0]?.id ?? null);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [projectId]);
+    setActiveThreadId((current) => current ?? threads[0]?.id ?? null);
+  }, [threads]);
 
-  // Track topic files locally so new ones show immediately
-  const [topicFiles, setTopicFiles] = useState<TopicFileMeta[]>(project.topicFiles);
-
-  // Live content map — holds content pushed from streaming before fetch
-  const [liveContent, setLiveContent] = useState(() => new Map<string, string>());
-
-  const handleTopicUpdate = useCallback(
-    (update: ChatStreamTopicUpdate) => {
-      setLiveContent((prev) => new Map(prev).set(update.topicId, update.content));
-
-      // Upsert the topic in local state
-      setTopicFiles((prev) => {
-        const exists = prev.find((t) => t.id === update.topicId);
-        if (exists) {
-          return prev.map((t) =>
-            t.id === update.topicId
-              ? {
-                  ...t,
-                  title: update.title,
-                  status: update.status,
-                  updatedAt: new Date().toISOString(),
-                }
-              : t,
-          );
-        }
-        return [
-          ...prev,
-          {
-            id: update.topicId,
-            projectId: project.project.id,
-            slug: update.slug,
-            title: update.title,
-            status: update.status,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-          },
-        ];
-      });
-    },
-    [project.project.id],
-  );
-
-  const handleTopicUpdates = useCallback((_updates: TopicFileMeta[]) => {
-    // The individual topicUpdate events already handled local state.
-    // This is just a confirmation — we can refresh from server for consistency.
-  }, []);
+  useEffect(() => {
+    if (selectedClaimId === null && review?.claims[0]) {
+      setSelectedClaimId(review.claims[0].id);
+    }
+  }, [review, selectedClaimId]);
 
   const handleComplete = useCallback(() => {
-    void refreshProjects(projectId);
-  }, [refreshProjects, projectId]);
+    void queryClient.invalidateQueries({ queryKey: projectsKeys.detail(projectId) });
+    void queryClient.invalidateQueries({ queryKey: projectsKeys.list() });
+  }, [projectId, queryClient]);
 
   const activeThread = threads.find((thread) => thread.id === activeThreadId) ?? null;
 
@@ -114,18 +104,71 @@ function ChatPage() {
     projectId,
     threadId: activeThreadId ?? "",
     selection,
-    onTopicUpdate: handleTopicUpdate,
-    onTopicUpdates: handleTopicUpdates,
     onComplete: handleComplete,
   });
 
   async function handleCreateThread() {
     const created = await createThread(projectId, "coach");
-    setThreads((prev) => [...prev, created]);
+    appendThreadToCache(queryClient, projectId, "coach", created);
     setActiveThreadId(created.id);
   }
 
-  // No resume uploaded yet
+  async function handleSelectClaim(claimId: string) {
+    setSelectedClaimId(claimId);
+    try {
+      const mapping = await createAnchorThread.mutateAsync({
+        anchorType: "claim",
+        anchorId: claimId,
+      });
+      setActiveThreadId(mapping.threadId);
+      await queryClient.invalidateQueries({ queryKey: ["chat", "threads", projectId, "coach"] });
+    } catch (err) {
+      console.error("Failed to open claim thread", err);
+    }
+  }
+
+  async function handleStartGapChat(gapId: string) {
+    setPendingGapId(gapId);
+    try {
+      const mapping = await createAnchorThread.mutateAsync({
+        anchorType: "gap",
+        anchorId: gapId,
+      });
+      setActiveThreadId(mapping.threadId);
+      await queryClient.invalidateQueries({ queryKey: ["chat", "threads", projectId, "coach"] });
+    } catch (err) {
+      console.error("Failed to open gap thread", err);
+    } finally {
+      setPendingGapId(null);
+    }
+  }
+
+  async function handleDeepReviewSubmit(input: { pastedJds: string[]; useExplorer: boolean }) {
+    if (!resumeDoc) return;
+    try {
+      await startDeepReview.mutateAsync({
+        projectId,
+        resumeDocId: resumeDoc.id,
+        pastedJds: input.pastedJds,
+        useExplorer: input.useExplorer,
+      });
+      setDeepModalOpen(false);
+      void queryClient.invalidateQueries({ queryKey: coachKeys.review(projectId) });
+    } catch (err) {
+      console.error("Failed to start deep review", err);
+    }
+  }
+
+  const selectedClaim = review?.claims.find((c) => c.id === selectedClaimId) ?? null;
+
+  if (!project) {
+    return (
+      <div className="rounded-lg bg-muted/30 p-6 text-sm text-muted-foreground">
+        Project not found.
+      </div>
+    );
+  }
+
   if (!resumeDoc) {
     return (
       <section className="rounded-lg bg-card p-6 shadow-sm">
@@ -158,75 +201,29 @@ function ChatPage() {
 
   return (
     <div className="flex h-full min-h-0 gap-3 overflow-hidden">
-      {showSessions ? (
-        <aside className="flex w-72 shrink-0 flex-col overflow-hidden rounded-lg border bg-card shadow-sm">
-          <div className="flex items-center justify-between border-b px-4 py-3">
-            <div>
-              <p className="text-sm font-medium">Sessions</p>
-              <p className="text-xs text-muted-foreground">Coach threads for this project</p>
-            </div>
-            <div className="flex items-center gap-1">
-              <Button size="icon" variant="ghost" onClick={() => void handleCreateThread()}>
-                <MessageSquarePlus className="size-4" />
-              </Button>
-              <Button size="icon" variant="ghost" onClick={() => setShowSessions(false)}>
-                <PanelLeftClose className="size-4" />
-              </Button>
-            </div>
-          </div>
-          <div className="flex-1 space-y-2 overflow-y-auto p-3">
-            {threads.map((thread) => (
-              <button
-                key={thread.id}
-                type="button"
-                onClick={() => setActiveThreadId(thread.id)}
-                className={`w-full rounded-md border px-3 py-2 text-left transition-colors ${
-                  thread.id === activeThreadId
-                    ? "border-primary/50 bg-primary/10"
-                    : "border-border bg-background hover:bg-muted"
-                }`}
-              >
-                <p className="truncate text-sm font-medium text-foreground">{thread.title}</p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {new Date(thread.updatedAt).toLocaleString()}
-                </p>
-              </button>
-            ))}
-          </div>
-        </aside>
-      ) : (
-        <aside className="flex w-12 shrink-0 flex-col items-center gap-2 rounded-lg border bg-card px-2 py-3 shadow-sm">
-          <Button size="icon" variant="ghost" onClick={() => setShowSessions(true)}>
-            <PanelLeftOpen className="size-4" />
-          </Button>
-          <Button size="icon" variant="ghost" onClick={() => void handleCreateThread()}>
-            <MessageSquarePlus className="size-4" />
-          </Button>
-        </aside>
-      )}
+      <SessionSidebar
+        threads={threads}
+        activeThreadId={activeThreadId}
+        onSelectThread={setActiveThreadId}
+        onCreateThread={() => void handleCreateThread()}
+        onToggleVisibility={() => setShowSessions((prev) => !prev)}
+        expanded={showSessions}
+      />
 
-      {/* Chat area */}
-      <div className="flex min-w-0 flex-1 flex-col">
-        <div className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-card px-4 py-3 shadow-sm">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <Badge variant="default">Active resume</Badge>
-              <p className="truncate text-sm font-medium text-foreground">{resumeDoc.name}</p>
-            </div>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Chat responses are grounded against this resume version.
-              {activeThread ? ` Thread: ${activeThread.title}` : ""}
-            </p>
-          </div>
+      <div className="flex min-w-0 flex-1 flex-col gap-3 overflow-y-auto">
+        <ResumeBanner resumeDoc={resumeDoc} activeThread={activeThread} projectSlug={projectSlug} />
 
-          <Link
-            to="/projects/$projectId/resume"
-            params={{ projectId: projectSlug }}
-            className={buttonVariants({ variant: "outline", size: "sm" })}
-          >
-            Manage resumes
-          </Link>
-        </div>
+        {review ? (
+          <FocusAreaCard
+            review={review}
+            selectedClaimId={selectedClaimId}
+            onSelectClaim={(claimId) => void handleSelectClaim(claimId)}
+            onRunDeepReview={() => setDeepModalOpen(true)}
+            deepRunning={startDeepReview.isPending}
+          />
+        ) : (
+          <PendingReviewCard />
+        )}
 
         <ChatPanel
           messages={messages}
@@ -238,12 +235,41 @@ function ChatPage() {
           providers={providers}
           selection={selection}
           onSelectionChange={setSelection}
-          className="min-h-0 flex-1"
+          className="min-h-[320px] flex-1"
         />
+
+        {review ? (
+          <NextStepsCard
+            steps={review.nextSteps}
+            onToggle={(stepId, completed) => toggleNextStep.mutate({ stepId, completed })}
+          />
+        ) : null}
       </div>
 
-      {/* Topic artifact panel */}
-      <TopicArtifactPanel projectId={projectId} topics={topicFiles} liveContent={liveContent} />
+      <RightRail
+        projectId={projectId}
+        initialTopics={project.topicFiles}
+        selectedClaim={selectedClaim}
+        suggestions={review?.suggestions ?? []}
+        gaps={review?.gaps ?? []}
+        onStartGapChat={(gapId) => void handleStartGapChat(gapId)}
+        pendingGapId={pendingGapId}
+      />
+
+      <RunDeepReviewModal
+        open={deepModalOpen}
+        onOpenChange={setDeepModalOpen}
+        onSubmit={handleDeepReviewSubmit}
+        submitting={startDeepReview.isPending}
+      />
+    </div>
+  );
+}
+
+function PendingReviewCard() {
+  return (
+    <div className="rounded-lg border border-dashed bg-muted/30 p-4 text-sm text-muted-foreground">
+      Coach review running… this updates automatically when your resume finishes analyzing.
     </div>
   );
 }

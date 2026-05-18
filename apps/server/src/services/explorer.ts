@@ -1,67 +1,26 @@
-import { and, eq } from "drizzle-orm";
-import { existsSync } from "node:fs";
-import path from "node:path";
-import { z } from "zod";
-import { runAgent } from "@jobseeker/browser-agent";
-import type {
-  ChatModelSelection,
-  DomainMemory,
-  ExplorerConfigRecord,
-  ExplorerDomainConfig,
-  ExplorerFreshness,
-  JobMatch,
-  StructuredProfile,
+import { eq } from "drizzle-orm";
+import type { FoundJob } from "./explorer/jobTypes";
+import {
+  deriveNavigationContext,
+  deriveSearchIntent,
+  type NavigationContext,
+  type SearchIntent,
 } from "@jobseeker/contracts";
 
-import { dataDir } from "../env";
 import { db } from "../db";
-import { explorerConfigs, jobMatches, jobs, profiles, projects } from "../db/schema";
-import { makeId } from "../lib/ids";
+import { projects } from "../db/schema";
 import { logInfo, logWarn } from "../lib/log";
-import { createProjectSlug, ensureCodexHomeDir, ensureScopeDir } from "../lib/paths";
+import { createProjectSlug } from "../lib/paths";
 import { getProviderSettings } from "../lib/provider-settings";
-import { loadMemory, pickMemory } from "./explorerMemory";
+import { readExplorerConfig, readExplorerProfile } from "./explorer/config";
+import { deleteOldExplorerJobs, saveDiscoveredJob } from "./explorer/persist";
+import { getEnabledDomains, getQueriesForDomain, type QuerySource } from "./explorer/queryPlanning";
+import { findJobsForQuery, isAbortLikeError } from "./explorer/runtime";
+import type { ExplorerRunOptions } from "./explorer/types";
 
-const FOUND_JOB_SCHEMA = z.object({
-  title: z.string().min(1),
-  company: z.string().min(1).default("Unknown company"),
-  location: z.string().min(1).default("Unknown location"),
-  url: z.string().url(),
-  summary: z.string().min(1).default("No summary provided."),
-  salary: z.string().optional(),
-});
+export type { ExplorerProgress, ExplorerRunOptions } from "./explorer/types";
 
-const FOUND_JOBS_SCHEMA = z.object({
-  jobs: z.array(FOUND_JOB_SCHEMA).default([]),
-});
-
-type FoundJob = z.infer<typeof FOUND_JOBS_SCHEMA>["jobs"][number];
-
-export interface ExplorerProgress {
-  phase: "query_started" | "query_finished" | "crawl_step" | "codex_raw";
-  domain: string;
-  query: string;
-  currentQuery: number;
-  totalQueries: number;
-  model?: string;
-  effort?: string;
-  jobsFound?: number;
-  step?: number;
-  url?: string;
-  action?: string;
-  params?: unknown;
-  ok?: boolean;
-  result?: string;
-  retry?: boolean;
-  raw?: string;
-}
-
-interface ExplorerRunOptions {
-  modelSelection?: ChatModelSelection;
-  onProgress?: (progress: ExplorerProgress) => void | Promise<void>;
-}
-
-function resolveExplorerModelSelection(selection?: ChatModelSelection): {
+function resolveExplorerModelSelection(selection?: ExplorerRunOptions["modelSelection"]): {
   model: string;
   effort: string;
 } {
@@ -78,6 +37,14 @@ function resolveExplorerModelSelection(selection?: ChatModelSelection): {
   };
 }
 
+/**
+ * Runs the explorer discovery workflow for one project.
+ *
+ * This entrypoint loads explorer config/profile state, derives the concrete
+ * `(domain, query)` runs to execute, processes them with bounded concurrency,
+ * persists job matches incrementally, and only retires stale explorer rows once
+ * the new run has produced at least one replacement result.
+ */
 export async function runExplorerDiscovery(projectId: string): Promise<{
   jobsCreated: number;
   domainsProcessed: number;
@@ -101,7 +68,7 @@ export async function runExplorerDiscovery(
 }> {
   const [config, profile] = await Promise.all([
     readExplorerConfig(projectId),
-    readProfile(projectId),
+    readExplorerProfile(projectId),
   ]);
   const providerSettings = getProviderSettings();
   if (!providerSettings.codex.enabled) {
@@ -114,39 +81,80 @@ export async function runExplorerDiscovery(
   }
   const projectSlug = project.slug ?? createProjectSlug(project.title, project.id);
   const agent = resolveExplorerModelSelection(options?.modelSelection);
-  const memories = await loadMemory();
-  const domains = getRunnableDomains(config.domains);
+  const domains = getEnabledDomains(config.domains);
   if (domains.length === 0) {
     return { jobsCreated: 0, domainsProcessed: 0, queriesRun: 0 };
   }
 
+  const searchIntent: SearchIntent | null = profile ? deriveSearchIntent(profile) : null;
+
   const plannedRuns: Array<{
-    domain: ExplorerDomainConfig;
+    domain: (typeof domains)[number];
     query: string;
+    source: QuerySource;
     maxJobs: number;
+    navigation: NavigationContext;
   }> = [];
   for (const domain of domains) {
     const queries = getQueriesForDomain(domain, profile);
     if (queries.length === 0) {
+      logInfo("explorer queries planned", {
+        domain: domain.domain,
+        count: 0,
+        sources: {},
+      });
       continue;
     }
 
+    const sources: Record<string, number> = {};
+    for (const entry of queries) {
+      sources[entry.source] = (sources[entry.source] ?? 0) + 1;
+    }
+    logInfo("explorer queries planned", {
+      domain: domain.domain,
+      count: queries.length,
+      sources,
+    });
+
     const perQueryLimit = Math.max(1, Math.ceil(domain.jobLimit / queries.length));
-    for (const query of queries) {
+    for (const entry of queries) {
+      const navigation: NavigationContext = searchIntent
+        ? deriveNavigationContext({
+            intent: searchIntent,
+            query: entry.query,
+            freshness: domain.freshness,
+            maxJobs: perQueryLimit,
+          })
+        : {
+            query: entry.query,
+            freshness: domain.freshness,
+            maxJobs: perQueryLimit,
+          };
       plannedRuns.push({
         domain,
-        query,
+        query: entry.query,
+        source: entry.source,
         maxJobs: perQueryLimit,
+        navigation,
       });
     }
   }
 
-  const collected: FoundJob[] = [];
-  let queriesRun = 0;
+  const runStartedAt = new Date().toISOString();
+  const seenUrls = new Set<string>();
+  let jobsCreated = 0;
   const totalQueries = plannedRuns.length;
+  const concurrency = Math.max(
+    1,
+    Number.parseInt(process.env.EXPLORER_CONCURRENCY ?? "3", 10) || 3,
+  );
+  const timeoutMs = Math.max(
+    10_000,
+    Number.parseInt(process.env.EXPLORER_PAIR_TIMEOUT_MS ?? "180000", 10) || 180_000,
+  );
 
-  for (const [index, run] of plannedRuns.entries()) {
-    queriesRun += 1;
+  const processPair = async (run: (typeof plannedRuns)[number], index: number) => {
+    let pairJobsFound = 0;
     await options?.onProgress?.({
       phase: "query_started",
       domain: run.domain.domain,
@@ -157,22 +165,66 @@ export async function runExplorerDiscovery(
       effort: agent.effort,
     });
 
-    const jobsForQuery = await findJobsForQuery({
-      domain: run.domain.domain,
-      query: run.query,
-      freshness: run.domain.freshness,
-      maxJobs: run.maxJobs,
-      memory: pickMemory(memories, run.domain.domain),
-      currentQuery: index + 1,
-      totalQueries,
-      model: agent.model,
-      effort: agent.effort,
-      projectSlug,
-      codexBinaryPath: providerSettings.codex.binaryPath,
-      codexAuthHome: providerSettings.codex.homePath,
-      onProgress: options?.onProgress,
-    });
-    collected.push(...jobsForQuery);
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      controller.abort(new Error(`explorer pair timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    const persistFound = async (job: FoundJob) => {
+      if (controller.signal.aborted) return;
+      const result = await saveDiscoveredJob({ projectId, profile, job, seenUrls });
+      if (!result) return;
+      pairJobsFound += 1;
+      jobsCreated += 1;
+      await options?.onProgress?.({
+        phase: "job_found",
+        domain: run.domain.domain,
+        query: run.query,
+        currentQuery: index + 1,
+        totalQueries,
+        job,
+        score: result.score,
+        reasons: result.reasons,
+        gaps: result.gaps,
+      });
+    };
+
+    try {
+      await findJobsForQuery({
+        domain: run.domain.domain,
+        query: run.query,
+        freshness: run.domain.freshness,
+        maxJobs: run.maxJobs,
+        navigation: run.navigation,
+        currentQuery: index + 1,
+        totalQueries,
+        model: agent.model,
+        effort: agent.effort,
+        projectSlug,
+        codexBinaryPath: providerSettings.codex.binaryPath,
+        codexAuthHome: providerSettings.codex.homePath,
+        signal: controller.signal,
+        onProgress: options?.onProgress,
+        onFoundJob: persistFound,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (controller.signal.aborted || isAbortLikeError(error)) {
+        logInfo("explorer query aborted", {
+          domain: run.domain.domain,
+          query: run.query,
+          error: message,
+        });
+      } else {
+        logWarn("explorer query failed", {
+          domain: run.domain.domain,
+          query: run.query,
+          error: message,
+        });
+      }
+    } finally {
+      clearTimeout(timer);
+    }
 
     await options?.onProgress?.({
       phase: "query_finished",
@@ -180,649 +232,47 @@ export async function runExplorerDiscovery(
       query: run.query,
       currentQuery: index + 1,
       totalQueries,
-      jobsFound: jobsForQuery.length,
+      jobsFound: pairJobsFound,
     });
+  };
+
+  await runWithConcurrency(
+    plannedRuns.map((run, index) => () => processPair(run, index)),
+    concurrency,
+  );
+
+  if (jobsCreated > 0) {
+    await deleteOldExplorerJobs(projectId, runStartedAt);
   }
 
-  const deduped = dedupeJobs(collected);
-  const scored = scoreJobs(deduped, profile, projectId);
-
-  await replaceExplorerJobs(projectId, scored);
-
   return {
-    jobsCreated: scored.length,
+    jobsCreated,
     domainsProcessed: domains.length,
-    queriesRun,
+    queriesRun: totalQueries,
   };
 }
 
-async function readExplorerConfig(projectId: string): Promise<ExplorerConfigRecord> {
-  const row = await db
-    .select()
-    .from(explorerConfigs)
-    .where(eq(explorerConfigs.projectId, projectId))
-    .get();
-
-  if (!row) {
-    return {
-      projectId,
-      domains: [],
-      includeAgentSuggestions: true,
-      updatedAt: new Date().toISOString(),
-    };
-  }
-
-  return {
-    projectId,
-    domains: normalizeDomainConfigs(JSON.parse(row.domainsJson)),
-    includeAgentSuggestions: row.includeAgentSuggestions,
-    updatedAt: row.updatedAt,
+/**
+ * Small fixed-width worker pool used by explorer query execution.
+ *
+ * Explorer only needs bounded fan-out with stable result ordering, so this
+ * local helper stays simpler than introducing a generic queue abstraction.
+ */
+async function runWithConcurrency<T>(tasks: Array<() => Promise<T>>, limit: number): Promise<T[]> {
+  const results: T[] = new Array(tasks.length);
+  let cursor = 0;
+  const workers: Array<Promise<void>> = [];
+  const worker = async () => {
+    while (true) {
+      const index = cursor;
+      cursor += 1;
+      if (index >= tasks.length) return;
+      results[index] = await tasks[index]();
+    }
   };
-}
-
-async function readProfile(projectId: string): Promise<StructuredProfile | null> {
-  const row = await db.select().from(profiles).where(eq(profiles.projectId, projectId)).get();
-  if (!row) return null;
-  return JSON.parse(row.profileJson) as StructuredProfile;
-}
-
-function getRunnableDomains(domains: ExplorerDomainConfig[]): ExplorerDomainConfig[] {
-  return domains.filter((domain) => domain.enabled);
-}
-
-function getQueriesForDomain(
-  domain: ExplorerDomainConfig,
-  profile: StructuredProfile | null,
-): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-
-  for (const query of domain.queries) {
-    const value = query.trim();
-    if (!value) continue;
-    const key = value.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(value);
+  for (let i = 0; i < Math.min(limit, tasks.length); i += 1) {
+    workers.push(worker());
   }
-
-  if (out.length > 0) {
-    return out;
-  }
-
-  if (!profile) {
-    return [];
-  }
-
-  // Fallback to profile roles when a domain has no explicit queries.
-  for (const role of profile.targeting.roles) {
-    const value = role.title.trim();
-    if (!value) continue;
-    const key = value.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(value);
-    if (out.length >= 3) break;
-  }
-
-  return out;
-}
-
-async function findJobsForQuery(input: {
-  domain: string;
-  query: string;
-  freshness: ExplorerFreshness;
-  maxJobs: number;
-  memory: DomainMemory | null;
-  currentQuery: number;
-  totalQueries: number;
-  model: string;
-  effort: string;
-  projectSlug: string;
-  codexBinaryPath: string;
-  codexAuthHome: string;
-  onProgress?: (progress: ExplorerProgress) => void | Promise<void>;
-}): Promise<FoundJob[]> {
-  const url = toDomainUrl(input.domain);
-  const task = buildAgentTask(input);
-  const launch = getLaunchOptions();
-  const maxSteps = Number.parseInt(process.env.EXPLORER_MAX_STEPS ?? "40", 10) || 40;
-
-  logInfo("explorer query started", {
-    domain: input.domain,
-    query: input.query,
-    freshness: input.freshness,
-    maxJobs: input.maxJobs,
-    model: input.model,
-    effort: input.effort,
-    headless: launch.headless,
-    channel: launch.channel,
-    userDataDir: launch.userDataDir,
-    proxyEnabled: Boolean(launch.proxyServer),
-    extensionCount: launch.extensionPaths?.length ?? 0,
-    locale: launch.locale,
-    timezone: launch.timezoneId,
-  });
-
-  try {
-    let result = await runAgent({
-      task,
-      startUrl: url,
-      maxSteps,
-      model: input.model,
-      effort: input.effort,
-      launch,
-      codexBin: input.codexBinaryPath,
-      codexCwd: ensureScopeDir(input.projectSlug, "explorer"),
-      codexHome: ensureCodexHomeDir(input.projectSlug, "explorer", `explorer_${input.domain}`),
-      codexAuthHome: input.codexAuthHome,
-      onStep: (step) => {
-        logInfo("explorer crawl step", {
-          domain: input.domain,
-          query: input.query,
-          step: step.step,
-          url: step.url,
-          action: step.action.name,
-          params: summarizeStepParams(step.action.params),
-          ok: step.result.ok,
-          result: step.result.message,
-        });
-        void input.onProgress?.({
-          phase: "crawl_step",
-          domain: input.domain,
-          query: input.query,
-          currentQuery: input.currentQuery,
-          totalQueries: input.totalQueries,
-          step: step.step,
-          url: step.url,
-          action: step.action.name,
-          params: summarizeStepParams(step.action.params),
-          ok: step.result.ok,
-          result: step.result.message,
-          retry: false,
-        });
-      },
-      onCodexOutput: ({ step, raw }) => {
-        void input.onProgress?.({
-          phase: "codex_raw",
-          domain: input.domain,
-          query: input.query,
-          currentQuery: input.currentQuery,
-          totalQueries: input.totalQueries,
-          step,
-          raw: clipRawCodexOutput(raw),
-          retry: false,
-        });
-      },
-    });
-
-    if (!result.success && isBotInterstitial(result.summary)) {
-      logWarn("explorer query retry after anti-bot interstitial", {
-        domain: input.domain,
-        query: input.query,
-        summary: result.summary,
-      });
-
-      // Retry once with a fresh, non-headless profile to reduce challenge stickiness.
-      result = await runAgent({
-        task,
-        startUrl: url,
-        maxSteps,
-        model: input.model,
-        effort: input.effort,
-        launch: getRetryLaunchOptions(),
-        codexBin: input.codexBinaryPath,
-        codexCwd: ensureScopeDir(input.projectSlug, "explorer"),
-        codexHome: ensureCodexHomeDir(input.projectSlug, "explorer", `explorer_${input.domain}`),
-        codexAuthHome: input.codexAuthHome,
-        onStep: (step) => {
-          logInfo("explorer crawl step", {
-            domain: input.domain,
-            query: input.query,
-            step: step.step,
-            url: step.url,
-            action: step.action.name,
-            params: summarizeStepParams(step.action.params),
-            ok: step.result.ok,
-            result: step.result.message,
-            retry: true,
-          });
-          void input.onProgress?.({
-            phase: "crawl_step",
-            domain: input.domain,
-            query: input.query,
-            currentQuery: input.currentQuery,
-            totalQueries: input.totalQueries,
-            step: step.step,
-            url: step.url,
-            action: step.action.name,
-            params: summarizeStepParams(step.action.params),
-            ok: step.result.ok,
-            result: step.result.message,
-            retry: true,
-          });
-        },
-        onCodexOutput: ({ step, raw }) => {
-          void input.onProgress?.({
-            phase: "codex_raw",
-            domain: input.domain,
-            query: input.query,
-            currentQuery: input.currentQuery,
-            totalQueries: input.totalQueries,
-            step,
-            raw: clipRawCodexOutput(raw),
-            retry: true,
-          });
-        },
-      });
-    }
-
-    if (!result.success) {
-      logWarn("explorer query failed", {
-        domain: input.domain,
-        query: input.query,
-        summary: result.summary,
-      });
-      return [];
-    }
-
-    const parsed = parseFoundJobs(result.data);
-    logInfo("explorer query completed", {
-      domain: input.domain,
-      query: input.query,
-      jobsFound: parsed.length,
-      steps: result.steps,
-    });
-    return parsed;
-  } catch (error) {
-    logWarn("explorer query crashed", {
-      domain: input.domain,
-      query: input.query,
-      error,
-    });
-    return [];
-  }
-}
-
-function getLaunchOptions() {
-  const userDataDir = path.join(dataDir, "browser-profiles", "explorer-primary");
-  const extensionPaths = readExtensionPathsFromEnv();
-  return {
-    // Default to real Chrome and non-headless for better anti-bot posture.
-    channel: (process.env.EXPLORER_BROWSER_CHANNEL as "chrome" | "chromium" | "msedge") ?? "chrome",
-    headless: process.env.EXPLORER_HEADLESS === "true",
-    userDataDir,
-    proxyServer: process.env.EXPLORER_PROXY_SERVER,
-    proxyBypass: process.env.EXPLORER_PROXY_BYPASS,
-    userAgent: process.env.EXPLORER_USER_AGENT,
-    acceptLanguage: process.env.EXPLORER_ACCEPT_LANGUAGE,
-    locale: process.env.EXPLORER_LOCALE,
-    timezoneId: process.env.EXPLORER_TIMEZONE,
-    extensionPaths,
-    autoInstallBrowser: true,
-  } as const;
-}
-
-function getRetryLaunchOptions() {
-  const userDataDir = path.join(dataDir, "browser-profiles", "explorer-retry");
-  const extensionPaths = readExtensionPathsFromEnv();
-  return {
-    channel: (process.env.EXPLORER_BROWSER_CHANNEL as "chrome" | "chromium" | "msedge") ?? "chrome",
-    headless: false,
-    userDataDir,
-    proxyServer: process.env.EXPLORER_PROXY_SERVER,
-    proxyBypass: process.env.EXPLORER_PROXY_BYPASS,
-    userAgent: process.env.EXPLORER_USER_AGENT,
-    acceptLanguage: process.env.EXPLORER_ACCEPT_LANGUAGE,
-    locale: process.env.EXPLORER_LOCALE,
-    timezoneId: process.env.EXPLORER_TIMEZONE,
-    extensionPaths,
-    autoInstallBrowser: true,
-  } as const;
-}
-
-function readExtensionPathsFromEnv(): string[] {
-  const raw = process.env.EXPLORER_EXTENSION_PATHS;
-  if (!raw) return [];
-
-  return raw
-    .split(",")
-    .map((value) => value.trim())
-    .filter((value) => value.length > 0 && existsSync(value));
-}
-
-function isBotInterstitial(summary: string): boolean {
-  const text = summary.toLowerCase();
-  return (
-    text.includes("just a moment") ||
-    text.includes("anti-bot") ||
-    text.includes("captcha") ||
-    text.includes("challenge")
-  );
-}
-
-function summarizeStepParams(params: unknown): unknown {
-  if (!params || typeof params !== "object") {
-    return params;
-  }
-
-  const record = params as Record<string, unknown>;
-  const copy: Record<string, unknown> = {};
-
-  for (const [key, value] of Object.entries(record)) {
-    if (typeof value === "string") {
-      copy[key] = value.length > 160 ? `${value.slice(0, 160)}...` : value;
-      continue;
-    }
-
-    if (Array.isArray(value)) {
-      copy[key] = value.slice(0, 5);
-      continue;
-    }
-
-    copy[key] = value;
-  }
-
-  return copy;
-}
-
-function clipRawCodexOutput(raw: string): string {
-  const maxChars = Number.parseInt(process.env.EXPLORER_RAW_LOG_MAX_CHARS ?? "12000", 10) || 12000;
-  if (raw.length <= maxChars) {
-    return raw;
-  }
-  return `${raw.slice(0, maxChars)}\n... [truncated ${raw.length - maxChars} chars]`;
-}
-
-function buildAgentTask(input: {
-  domain: string;
-  query: string;
-  freshness: ExplorerFreshness;
-  maxJobs: number;
-  memory: DomainMemory | null;
-}): string {
-  const freshnessText = freshnessToText(input.freshness);
-  const memoryBlock = formatMemory(input.memory);
-  return `Find up to ${input.maxJobs} job postings on ${input.domain} for "${input.query}".
-Prefer listings posted ${freshnessText}.
-Return only currently visible, real job listings from this site.
-For each job capture: title, company, location, url, summary, and salary when available.
-${memoryBlock}
-When done, call done(success=true, summary=..., data={"jobs":[...]}) with valid JSON.
-If blocked, call done(success=false, summary=...).`;
-}
-
-function formatMemory(memory: DomainMemory | null): string {
-  if (!memory) {
-    return "Site memory: no domain-specific playbook. Use normal search and extract flow.";
-  }
-
-  const searchLine =
-    memory.searchHints.length > 0
-      ? `Search hints: ${memory.searchHints.join(" ")}`
-      : "Search hints: none.";
-  const extractLine =
-    memory.extractHints.length > 0
-      ? `Extract hints: ${memory.extractHints.join(" ")}`
-      : "Extract hints: none.";
-  const avoidLine =
-    memory.avoidHints.length > 0 ? `Avoid: ${memory.avoidHints.join(" ")}` : "Avoid: none.";
-
-  return `Site memory for ${memory.domain}. ${searchLine} ${extractLine} ${avoidLine}`;
-}
-
-function freshnessToText(freshness: ExplorerFreshness): string {
-  if (freshness === "24h") return "within the last 24 hours";
-  if (freshness === "week") return "within the last week";
-  if (freshness === "month") return "within the last month";
-  return "at any time";
-}
-
-function toDomainUrl(domain: string): string {
-  const clean = domain
-    .trim()
-    .toLowerCase()
-    .replace(/^https?:\/\//, "");
-  return `https://${clean}`;
-}
-
-function parseFoundJobs(data: unknown): FoundJob[] {
-  const parsedObject = FOUND_JOBS_SCHEMA.safeParse(data);
-  if (parsedObject.success) {
-    return parsedObject.data.jobs;
-  }
-
-  // Some runs may return a direct array instead of { jobs: [...] }.
-  const parsedArray = z.array(FOUND_JOB_SCHEMA).safeParse(data);
-  if (parsedArray.success) {
-    return parsedArray.data;
-  }
-
-  return [];
-}
-
-function dedupeJobs(jobsList: FoundJob[]): FoundJob[] {
-  const byKey = new Map<string, FoundJob>();
-
-  for (const job of jobsList) {
-    const key = job.url.trim().toLowerCase();
-    if (!key) continue;
-    if (byKey.has(key)) continue;
-    byKey.set(key, job);
-  }
-
-  return [...byKey.values()];
-}
-
-function scoreJobs(
-  jobsList: FoundJob[],
-  profile: StructuredProfile | null,
-  projectId: string,
-): Array<{
-  job: {
-    id: string;
-    projectId: string;
-    source: "explorer";
-    title: string;
-    company: string;
-    location: string;
-    url: string;
-    summary: string;
-    salary: string | null;
-    createdAt: string;
-  };
-  match: JobMatch;
-}> {
-  return jobsList.map((job) => {
-    const score = profile ? calculateScore(job, profile) : 0.5;
-    const reasons = profile ? buildReasons(job, profile) : ["General match from explorer"];
-    const gaps = profile ? buildGaps(job, profile) : [];
-    const jobId = makeId("job");
-    const createdAt = new Date().toISOString();
-
-    return {
-      job: {
-        id: jobId,
-        projectId,
-        source: "explorer",
-        title: job.title,
-        company: job.company,
-        location: job.location,
-        url: job.url,
-        summary: job.summary,
-        salary: job.salary ?? null,
-        createdAt,
-      },
-      match: {
-        jobId,
-        projectId,
-        score,
-        reasons,
-        gaps,
-      },
-    };
-  });
-}
-
-function calculateScore(job: FoundJob, profile: StructuredProfile): number {
-  const haystack = `${job.title} ${job.summary} ${job.company}`.toLowerCase();
-  const roleTerms = profile.targeting.roles.map((role) => role.title.toLowerCase());
-  const skillTerms = profile.skills.map((skill) => skill.name.toLowerCase()).slice(0, 12);
-  const keywordTerms = profile.searchContext.effectiveKeywords.map((term) => term.toLowerCase());
-  const locationTerms = profile.targeting.locations
-    .flatMap((entry) => [entry.city, entry.state, entry.country])
-    .filter((value): value is string => Boolean(value))
-    .map((value) => value.toLowerCase());
-
-  const roleHit = roleTerms.some((term) => haystack.includes(term)) ? 0.35 : 0;
-  const skillHits = skillTerms.filter((term) => haystack.includes(term)).length;
-  const keywordHits = keywordTerms.filter((term) => haystack.includes(term)).length;
-  const locationHit = locationTerms.some(
-    (term) => job.location.toLowerCase().includes(term) || job.summary.toLowerCase().includes(term),
-  )
-    ? 0.1
-    : 0;
-
-  const skillScore = Math.min(0.3, skillHits * 0.05);
-  const keywordScore = Math.min(0.2, keywordHits * 0.05);
-  const base = 0.15;
-  const total = base + roleHit + skillScore + keywordScore + locationHit;
-
-  return Math.max(0.05, Math.min(0.98, Number(total.toFixed(2))));
-}
-
-function buildReasons(job: FoundJob, profile: StructuredProfile): string[] {
-  const out: string[] = [];
-  const haystack = `${job.title} ${job.summary}`.toLowerCase();
-
-  for (const role of profile.targeting.roles.slice(0, 3)) {
-    if (haystack.includes(role.title.toLowerCase())) {
-      out.push(`Role alignment: ${role.title}`);
-    }
-  }
-
-  for (const skill of profile.skills.slice(0, 6)) {
-    if (haystack.includes(skill.name.toLowerCase())) {
-      out.push(`Mentions skill: ${skill.name}`);
-    }
-  }
-
-  if (out.length === 0) {
-    out.push("General alignment based on search query and profile context");
-  }
-
-  return out.slice(0, 5);
-}
-
-function buildGaps(job: FoundJob, profile: StructuredProfile): string[] {
-  const out: string[] = [];
-  const haystack = `${job.title} ${job.summary}`.toLowerCase();
-
-  const topSkills = profile.skills.slice(0, 6);
-  const missingSkills = topSkills.filter((skill) => !haystack.includes(skill.name.toLowerCase()));
-
-  if (missingSkills.length >= 3) {
-    out.push("Key profile skills are not clearly mentioned in this listing");
-  }
-
-  const wantsRemote = profile.targeting.locations.some((entry) => entry.remote === "full");
-  const jobMentionsRemote =
-    haystack.includes("remote") || job.location.toLowerCase().includes("remote");
-  if (wantsRemote && !jobMentionsRemote) {
-    out.push("Remote preference may not match this role");
-  }
-
-  return out.slice(0, 3);
-}
-
-async function replaceExplorerJobs(
-  projectId: string,
-  scored: Array<{
-    job: {
-      id: string;
-      projectId: string;
-      source: "explorer";
-      title: string;
-      company: string;
-      location: string;
-      url: string;
-      summary: string;
-      salary: string | null;
-      createdAt: string;
-    };
-    match: JobMatch;
-  }>,
-) {
-  const existingExplorerJobs = await db
-    .select({ id: jobs.id })
-    .from(jobs)
-    .where(and(eq(jobs.projectId, projectId), eq(jobs.source, "explorer")))
-    .all();
-
-  for (const row of existingExplorerJobs) {
-    await db.delete(jobMatches).where(eq(jobMatches.jobId, row.id));
-  }
-
-  await db.delete(jobs).where(and(eq(jobs.projectId, projectId), eq(jobs.source, "explorer")));
-
-  if (scored.length === 0) {
-    return;
-  }
-
-  await db.insert(jobs).values(scored.map((entry) => entry.job));
-  await db.insert(jobMatches).values(
-    scored.map((entry) => ({
-      jobId: entry.match.jobId,
-      projectId: entry.match.projectId,
-      score: entry.match.score,
-      reasonsJson: JSON.stringify(entry.match.reasons),
-      gapsJson: JSON.stringify(entry.match.gaps),
-    })),
-  );
-}
-
-function normalizeDomainConfigs(input: unknown): ExplorerConfigRecord["domains"] {
-  if (!Array.isArray(input)) return [];
-
-  return input
-    .map((entry) => {
-      if (typeof entry === "string") {
-        return {
-          domain: entry,
-          enabled: true,
-          jobLimit: 25,
-          freshness: "week" as const,
-          queries: [],
-        };
-      }
-
-      if (entry && typeof entry === "object") {
-        const record = entry as Record<string, unknown>;
-        const domain = typeof record.domain === "string" ? record.domain : null;
-        if (!domain) return null;
-
-        const queriesSource = Array.isArray(record.queries)
-          ? record.queries
-          : Array.isArray(record.queryIds)
-            ? record.queryIds
-            : [];
-
-        return {
-          domain,
-          enabled: record.enabled !== false,
-          jobLimit: typeof record.jobLimit === "number" ? record.jobLimit : 25,
-          freshness:
-            record.freshness === "24h" ||
-            record.freshness === "week" ||
-            record.freshness === "month" ||
-            record.freshness === "any"
-              ? record.freshness
-              : "week",
-          queries: queriesSource.filter((value): value is string => typeof value === "string"),
-        };
-      }
-
-      return null;
-    })
-    .filter((entry): entry is ExplorerConfigRecord["domains"][number] => entry !== null);
+  await Promise.all(workers);
+  return results;
 }

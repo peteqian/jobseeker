@@ -27,13 +27,6 @@ export interface ExplorerConfigRecord {
   updatedAt: string;
 }
 
-export interface DomainMemory {
-  domain: string;
-  searchHints: string[];
-  extractHints: string[];
-  avoidHints: string[];
-}
-
 export interface ProjectRecord {
   id: string;
   slug: string;
@@ -57,6 +50,7 @@ export interface TaskRecord {
 export interface ProjectDocument {
   id: string;
   projectId: string;
+  jobId?: string | null;
   kind: ProjectDocumentKind;
   mimeType: string;
   name: string;
@@ -128,6 +122,11 @@ export interface StartTaskInput {
   type: TaskType;
   input?: string;
   jobId?: string;
+  resumeDocId?: string;
+  focusArea?: string;
+  deepReview?: boolean;
+  pastedJds?: string[];
+  useExplorer?: boolean;
   modelSelection?: import("./model").ChatModelSelection;
 }
 
