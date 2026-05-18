@@ -32,6 +32,7 @@ export function useProjectEvents(projectId: string | null) {
       "task.failed",
       "document.created",
       "jobs.updated",
+      "profile.updated",
     ];
 
     const onEvent = (rawEvent: MessageEvent<string>) => {

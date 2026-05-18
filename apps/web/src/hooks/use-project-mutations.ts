@@ -70,8 +70,17 @@ export function useCreateProject() {
 }
 
 export function useUploadResume() {
-  return useProjectMutation<void, { projectId: string; file: File }>({
-    mutationFn: ({ projectId, file }) => uploadProjectResume(projectId, file),
+  return useProjectMutation<
+    void,
+    {
+      projectId: string;
+      file: File;
+      options?: { runAtsAnalysis?: boolean; runHrAnalysis?: boolean };
+    }
+  >({
+    mutationFn: async ({ projectId, file, options }) => {
+      await uploadProjectResume(projectId, file, options);
+    },
     invalidateKeys: [],
     onSuccess: async () => {
       // Handled by event stream
@@ -80,8 +89,16 @@ export function useUploadResume() {
 }
 
 export function usePasteResume() {
-  return useProjectMutation<void, { projectId: string; input: ResumePasteInput }>({
-    mutationFn: ({ projectId, input }) => pasteProjectResume(projectId, input),
+  return useProjectMutation<
+    void,
+    {
+      projectId: string;
+      input: ResumePasteInput & { runAtsAnalysis?: boolean; runHrAnalysis?: boolean };
+    }
+  >({
+    mutationFn: async ({ projectId, input }) => {
+      await pasteProjectResume(projectId, input);
+    },
     invalidateKeys: [],
   });
 }
