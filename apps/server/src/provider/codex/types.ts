@@ -75,6 +75,15 @@ export interface CodexStructuredTurnInput<T> {
   readonly prompt: string;
   readonly schema: z.ZodType<T>;
   readonly signal?: AbortSignal;
+  /**
+   * Optional event callback invoked for every Codex SDK event during the turn.
+   *
+   * When set, the backend streams the turn (via `runStreamed`) and forwards
+   * each event synchronously so callers can surface reasoning, command runs,
+   * web searches, etc. to the UI live. The structured JSON validation still
+   * happens once the turn completes, exactly as with a non-streamed call.
+   */
+  readonly onEvent?: (event: CodexEvent) => void;
 }
 
 export interface CodexStructuredTurnResult<T> {

@@ -109,10 +109,22 @@ class SdkSession implements CodexSession {
     prompt,
     schema,
     signal,
+    onEvent,
   }: CodexStructuredTurnInput<T>): Promise<CodexStructuredTurnResult<T>> {
     const jsonSchema = z.toJSONSchema(schema, { target: "draft-2020-12" });
-    const turn = await this.thread.run(prompt, { outputSchema: jsonSchema, signal });
-    const finalResponse = turn.finalResponse;
+
+    let finalResponse: string;
+    if (onEvent) {
+      const stream = this.runEvents(prompt, { signal, outputSchema: jsonSchema });
+      for await (const event of stream) {
+        onEvent(event);
+      }
+      finalResponse = (await stream.result).text;
+    } else {
+      const turn = await this.thread.run(prompt, { outputSchema: jsonSchema, signal });
+      finalResponse = turn.finalResponse;
+    }
+
     let parsedJson: unknown;
     try {
       parsedJson = JSON.parse(finalResponse);
