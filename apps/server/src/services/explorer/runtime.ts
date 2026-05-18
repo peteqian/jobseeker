@@ -1,8 +1,9 @@
 import path from "node:path";
 import { z } from "zod";
-import { BrowserSession, runAgent, type Decision } from "@browser-agent/core";
-import { buildDecisionPrompt } from "@browser-agent/core/internal";
+import { BrowserSession, runAgent, type AgentOutput } from "@peteqian/browser-agent-sdk";
+import { buildDecisionPrompt } from "@peteqian/browser-agent-sdk/internal";
 
+import type { CodexEvent } from "../../provider/codex";
 import type { DistilledTrajectory, FoundJob } from "./jobTypes";
 import type { ExplorerFreshness, NavigationContext } from "@jobseeker/contracts";
 
@@ -259,6 +260,21 @@ export async function findJobsForQuery(input: {
               prompt,
               schema: DECISION_WIRE_SCHEMA,
               signal: input.signal,
+              onEvent: (event) => {
+                const summary = summarizeCodexEvent(event);
+                if (!summary) return;
+                void input.onProgress?.({
+                  phase: "codex_event",
+                  domain: input.domain,
+                  query: input.query,
+                  currentQuery: input.currentQuery,
+                  totalQueries: input.totalQueries,
+                  step: decisionInput.step,
+                  eventKind: summary.kind,
+                  eventText: summary.text,
+                  retry,
+                });
+              },
             }));
           } catch (error) {
             logWarn("explorer codex turn failed", {
@@ -481,7 +497,7 @@ export function isAbortLikeError(error: unknown): boolean {
  * Converts the explorer-specific wire schema into the generic browser-agent
  * `Decision` shape consumed by `runAgent`.
  */
-function normalizeDecision(parsed: z.infer<typeof DECISION_WIRE_SCHEMA>): Decision {
+function normalizeDecision(parsed: z.infer<typeof DECISION_WIRE_SCHEMA>): AgentOutput {
   return {
     thought: parsed.thought ?? undefined,
     actions: parsed.actions,
@@ -489,6 +505,51 @@ function normalizeDecision(parsed: z.infer<typeof DECISION_WIRE_SCHEMA>): Decisi
     summary: parsed.summary ?? undefined,
     success: parsed.success ?? undefined,
   };
+}
+
+/**
+ * Reduces a Codex SDK event into a compact `{ kind, text }` for UI streaming.
+ *
+ * Filters to events that move the user's mental model forward (reasoning,
+ * commands, web searches, errors) and drops the noisy `item.started`/`updated`
+ * deltas for agent_message — those are emitted again as the final `codex_raw`
+ * once the structured turn validates.
+ */
+function summarizeCodexEvent(event: CodexEvent): { kind: string; text: string } | null {
+  if (event.type === "turn.completed") {
+    const usage = event.usage;
+    if (!usage) return null;
+    return {
+      kind: "turn_completed",
+      text: `tokens in=${usage.inputTokens ?? "?"} out=${usage.outputTokens ?? "?"}`,
+    };
+  }
+  if (event.type !== "item.completed") return null;
+  const item = event.item;
+  switch (item.type) {
+    case "reasoning":
+      return { kind: "reasoning", text: clipText(item.text, 400) };
+    case "command_execution":
+      return { kind: "command", text: clipText(item.command, 200) };
+    case "web_search":
+      return { kind: "web_search", text: item.query };
+    case "mcp_tool_call":
+      return { kind: "mcp", text: `${item.server}.${item.tool}` };
+    case "todo_list":
+      return {
+        kind: "todo",
+        text: `${item.items.filter((i) => i.done).length}/${item.items.length} done`,
+      };
+    case "error":
+      return { kind: "error", text: clipText(item.message, 400) };
+    default:
+      return null;
+  }
+}
+
+function clipText(text: string, max: number): string {
+  if (text.length <= max) return text;
+  return `${text.slice(0, max)}…`;
 }
 
 /** Lifts foundJobs from the explorer wire schema into the canonical FoundJob shape. */

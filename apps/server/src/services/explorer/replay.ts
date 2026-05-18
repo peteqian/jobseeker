@@ -1,4 +1,4 @@
-import type { Page } from "@browser-agent/core";
+import type { Page } from "@peteqian/browser-agent-sdk";
 
 import type { DistilledTrajectory, Extractor, FoundJob, TrajectoryStep } from "./jobTypes";
 

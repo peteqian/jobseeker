@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { Page } from "@browser-agent/core";
+import type { Page } from "@peteqian/browser-agent-sdk";
 
 const FINGERPRINT_EXPRESSION = `(() => {
   const keepAttrs = ["role", "type", "name", "placeholder", "aria-label", "aria-labelledby"];
