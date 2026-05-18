@@ -1,6 +1,7 @@
 import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
+import { FileSearch } from "lucide-react";
 
 import { resumeVersionsQueryOptions } from "@/lib/query-options";
 import { useShellHeaderMeta } from "@/providers/shell-header-context";
@@ -11,6 +12,7 @@ import {
   useSwitchActiveResume,
   useDeleteResume,
 } from "@/hooks/use-project-mutations";
+import { Switch } from "@/components/ui/switch";
 import type { ResumeVersion } from "@jobseeker/contracts";
 
 import { AddResumeDialog } from "./projects.$projectId.resume/-add-resume-dialog";
@@ -44,6 +46,20 @@ function ResumePage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [leftWidth, setLeftWidth] = useState(360);
   const [isResizing, setIsResizing] = useState(false);
+  const [runAts, setRunAts] = useState(() => {
+    try {
+      return localStorage.getItem("jobseeker:runAtsAnalysis") !== "false";
+    } catch {
+      return true;
+    }
+  });
+  const [runHr, setRunHr] = useState(() => {
+    try {
+      return localStorage.getItem("jobseeker:runHrAnalysis") !== "false";
+    } catch {
+      return true;
+    }
+  });
 
   const versionsQuery = useQuery(
     project
@@ -128,6 +144,8 @@ function ResumePage() {
     );
   }
 
+  const projectRecord = project;
+
   function resetDialog() {
     setResumeText("");
     setResumeFile(null);
@@ -140,17 +158,23 @@ function ResumePage() {
         return;
       }
 
-      await uploadResume.mutateAsync({ projectId: project.project.id, file: resumeFile });
+      await uploadResume.mutateAsync({
+        projectId: projectRecord.project.id,
+        file: resumeFile,
+        options: { runAtsAnalysis: runAts, runHrAnalysis: runHr },
+      });
     } else {
       if (!resumeText.trim()) {
         return;
       }
 
       await pasteResume.mutateAsync({
-        projectId: project.project.id,
+        projectId: projectRecord.project.id,
         input: {
           text: resumeText,
-          name: `${project.project.title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-resume.md`,
+          name: `${projectRecord.project.title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-resume.md`,
+          runAtsAnalysis: runAts,
+          runHrAnalysis: runHr,
         },
       });
     }
@@ -187,7 +211,7 @@ function ResumePage() {
     }
 
     await switchActiveResume.mutateAsync({
-      projectId: project.project.id,
+      projectId: projectRecord.project.id,
       documentId: version.document.id,
     });
     const nextVersions = await refreshVersions();
@@ -201,7 +225,7 @@ function ResumePage() {
 
   async function handleDelete(version: ResumeVersion) {
     await deleteResume.mutateAsync({
-      projectId: project.project.id,
+      projectId: projectRecord.project.id,
       documentId: version.document.id,
     });
     const nextVersions = await refreshVersions();
@@ -218,6 +242,37 @@ function ResumePage() {
 
   return (
     <>
+      <div className="mb-3 flex flex-wrap items-center gap-4 rounded-lg border bg-card px-4 py-3 shadow-sm">
+        <div className="flex items-center gap-2">
+          <FileSearch className="size-4 text-muted-foreground" />
+          <span className="text-sm font-medium">On upload</span>
+        </div>
+        <label className="flex items-center gap-2 text-sm">
+          <Switch
+            checked={runAts}
+            onCheckedChange={(value) => {
+              setRunAts(value);
+              try {
+                localStorage.setItem("jobseeker:runAtsAnalysis", String(value));
+              } catch {}
+            }}
+          />
+          Run ATS analysis
+        </label>
+        <label className="flex items-center gap-2 text-sm">
+          <Switch
+            checked={runHr}
+            onCheckedChange={(value) => {
+              setRunHr(value);
+              try {
+                localStorage.setItem("jobseeker:runHrAnalysis", String(value));
+              } catch {}
+            }}
+          />
+          Run HR analysis
+        </label>
+      </div>
+
       <div
         ref={layoutRef}
         className="flex h-full min-h-0 overflow-hidden rounded-lg bg-card shadow-sm"
