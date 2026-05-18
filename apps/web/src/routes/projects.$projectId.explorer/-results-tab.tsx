@@ -35,11 +35,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
-import type {
-  ResultsTabProps,
-  DomainRailButtonProps,
-  JobResultCardProps,
-} from "./projects.$projectId.explorer/-explorer.types";
+import type { ResultsTabProps, DomainRailButtonProps, JobResultCardProps } from "./-explorer.types";
 
 function extractHost(url: string): string | null {
   try {
@@ -47,6 +43,24 @@ function extractHost(url: string): string | null {
   } catch {
     return null;
   }
+}
+
+interface MatchTier {
+  label: string;
+  variant: "default" | "secondary" | "outline" | "destructive";
+  toneClass: string;
+}
+
+function getMatchTier(score: number): MatchTier {
+  if (score >= 0.85)
+    return { label: "Excellent match", variant: "default", toneClass: "text-emerald-600" };
+  if (score >= 0.7)
+    return { label: "Strong match", variant: "default", toneClass: "text-green-600" };
+  if (score >= 0.5)
+    return { label: "Good match", variant: "secondary", toneClass: "text-amber-600" };
+  if (score >= 0.3)
+    return { label: "Partial match", variant: "outline", toneClass: "text-orange-600" };
+  return { label: "Weak match", variant: "outline", toneClass: "text-muted-foreground" };
 }
 
 function DomainRailButton({ label, count, active, onSelect }: DomainRailButtonProps) {
@@ -105,11 +119,8 @@ function JobResultCard({
           <div className="flex items-start gap-2">
             <h3 className="flex-1 font-medium leading-snug line-clamp-2">{job.title}</h3>
             {match ? (
-              <Badge
-                variant={match.score >= 0.7 ? "default" : "secondary"}
-                className="shrink-0 text-xs"
-              >
-                {(match.score * 100).toFixed(0)}%
+              <Badge variant={getMatchTier(match.score).variant} className="shrink-0 text-xs">
+                {getMatchTier(match.score).label} · {(match.score * 100).toFixed(0)}%
               </Badge>
             ) : null}
           </div>
@@ -262,8 +273,8 @@ function JobDetailPane({
 
       <div className="flex flex-wrap items-center gap-2">
         {match ? (
-          <Badge variant={match.score >= 0.7 ? "default" : "secondary"}>
-            Match {(match.score * 100).toFixed(0)}%
+          <Badge variant={getMatchTier(match.score).variant}>
+            {getMatchTier(match.score).label} · {(match.score * 100).toFixed(0)}%
           </Badge>
         ) : null}
         <Button
@@ -287,7 +298,7 @@ function JobDetailPane({
                 </p>
                 <ul className="space-y-1">
                   {match.reasons.map((reason) => (
-                    <li key={reason} className="text-sm leading-relaxed text-emerald-600">
+                    <li key={reason} className="text-sm leading-relaxed text-green-600">
                       {reason}
                     </li>
                   ))}

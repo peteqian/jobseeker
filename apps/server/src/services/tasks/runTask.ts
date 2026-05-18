@@ -2,7 +2,11 @@ import type { ChatModelSelection, StartTaskInput } from "@jobseeker/contracts";
 
 import { runCoachReview } from "../coach/review";
 import { runExplorerDiscovery } from "../explorer";
+import { readExplorerConfig } from "../explorer/config";
 import { writeProjectRuntimeEvent } from "../runtimeEvents";
+import { readProjectProfile } from "../projects/profile";
+import { runAtsAnalysis } from "../ats/analysis";
+import { runHrAnalysis } from "../hr/analysis";
 import { buildAndSaveProfile, createQuestionCardsIfMissing } from "./resumeIngest";
 import { runTailoringTask } from "./tailoring";
 
@@ -48,6 +52,41 @@ export async function runTask(
     return {};
   }
 
+  if (input.type === "ats_analysis") {
+    const result = await runAtsAnalysis({
+      projectId: input.projectId,
+      modelSelection: input.modelSelection,
+    });
+    if (result) {
+      await writeProjectRuntimeEvent(input.projectId, "task.progress", {
+        taskId,
+        taskType: "ats_analysis",
+        phase: "analysis_complete",
+        score: result.score,
+        issueCount: result.issues.length,
+      });
+    }
+    return {};
+  }
+
+  if (input.type === "hr_analysis") {
+    const result = await runHrAnalysis({
+      projectId: input.projectId,
+      modelSelection: input.modelSelection,
+    });
+    if (result) {
+      await writeProjectRuntimeEvent(input.projectId, "task.progress", {
+        taskId,
+        taskType: "hr_analysis",
+        phase: "analysis_complete",
+        score: result.score,
+        strengthCount: result.strengths.length,
+        concernCount: result.concerns.length,
+      });
+    }
+    return {};
+  }
+
   if (input.type === "resume_tailoring" || input.type === "cover_letter_tailoring") {
     await runTailoringTask({
       projectId: input.projectId,
@@ -70,6 +109,21 @@ async function runResumeIngestTask(
 ): Promise<void> {
   await buildAndSaveProfile(projectId, modelSelection);
   await createQuestionCardsIfMissing(projectId, taskId, timestamp);
+
+  const profile = await readProjectProfile(projectId);
+  const hasTargetRoles = (profile?.targeting.roles.length ?? 0) > 0;
+
+  const explorerConfig = await readExplorerConfig(projectId);
+  const hasEnabledDomains = explorerConfig.domains.some((d) => d.enabled);
+
+  if (hasTargetRoles && hasEnabledDomains) {
+    const { startTask } = await import("./startTask");
+    void startTask({
+      projectId,
+      type: "explorer_discovery",
+      modelSelection,
+    }).catch(() => {});
+  }
 }
 
 async function runExplorerDiscoveryTask(

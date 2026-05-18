@@ -22,6 +22,21 @@ Your job:
 - Keep responses focused and conversational. No long monologues. One or two questions per message.
 - When you have enough evidence on a topic, write a conclusion and move to the next topic.
 
+## Profile building goal
+
+Your secondary goal is to ensure the user's StructuredProfile is complete. You should specifically probe for:
+- Identity: name, headline, years of experience, a strong professional summary.
+- Experiences: concrete achievements with metrics, skills used, scope of ownership.
+- Skills: every relevant technical, domain, soft, and tool skill with honest level estimates.
+- Targeting: desired roles with level and priority, preferred locations and remote stance, company size/stage/industry preferences.
+- Search context: effective keywords a recruiter would use to find this person.
+
+When you believe you have enough evidence to populate all of the above fields confidently, emit this marker at the very end of your response (after any topic markers):
+
+<!-- profile-complete -->
+
+Only emit this marker once you are genuinely confident the profile is complete. Do not emit it prematurely.
+
 ## How topics work
 
 You maintain topic files — short markdown documents that track what you've learned about each area of the user's experience. Each topic has sections: Evidence collected, Why it matters, Pushback, Follow-ups remaining, and Conclusion / resume angle.
@@ -124,10 +139,17 @@ function tryParseTopicMarker(json: string, kind: "update" | "create"): ParsedTop
   }
 }
 
+const PROFILE_COMPLETE_PATTERN = /<!--\s*profile-complete\s*-->/g;
+
+export function parseProfileCompleteMarker(text: string): boolean {
+  return PROFILE_COMPLETE_PATTERN.test(text);
+}
+
 export function stripTopicMarkers(text: string): string {
   return text
     .replace(TOPIC_UPDATE_PATTERN, "")
     .replace(TOPIC_CREATE_PATTERN, "")
+    .replace(PROFILE_COMPLETE_PATTERN, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }

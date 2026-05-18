@@ -54,6 +54,23 @@ Jobseeker is split into a React client, an HTTP API, and a separate WebSocket RP
 4. Stream events are appended to `thread_events` and folded into `thread_projections`.
 5. The web hook replays from `getThreadProjection` and `subscribeThread(afterSequence)` to keep reconnects deterministic.
 
+### Task pipeline
+
+Several task types chain together to form an automated workflow:
+
+1. **Resume upload** (`POST /api/projects/:projectId/resume`) fires four background tasks:
+   - `resume_ingest` — extracts text and builds the `StructuredProfile`.
+   - `coach_review` — runs a resume critique with claims and next steps.
+   - `ats_analysis` — evaluates ATS compatibility, keyword gaps, and formatting.
+   - `hr_analysis` — evaluates cultural fit, soft skills, and career narrative.
+     The user can toggle ATS/HR analysis on/off via switches in the Resume UI.
+
+2. **Profile-driven discovery** — when `resume_ingest` completes, `runTask.ts` checks whether the new profile has `targeting.roles` and whether the explorer config has enabled domains. If both are true, it auto-starts `explorer_discovery`.
+
+3. **Chat-driven profile completion** — the coach chat system prompt instructs the model to emit `<!-- profile-complete -->` when it has gathered enough evidence. `sendMessage.ts` detects this marker (after at least 5 turns) and re-runs `resume_ingest`, which may then trigger `explorer_discovery`.
+
+4. **Job matching** — as the explorer discovers jobs, `saveDiscoveredJob` scores each role against the profile and writes `jobMatches` rows with a 0.0–1.0 score, reasons, and gaps. The Explorer results UI renders tiered match levels (Excellent, Strong, Good, Partial, Weak).
+
 ### Event model
 
 - `thread.command.dispatched` records accepted chat commands.

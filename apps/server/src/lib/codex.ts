@@ -1,7 +1,7 @@
 import type { z } from "zod";
 
 import { createCodexSession } from "../provider/codex";
-import type { CodexSession } from "../provider/codex";
+import type { CodexEvent, CodexSession } from "../provider/codex";
 
 export { ensureCodexAuthInHome } from "../provider/codex";
 
@@ -11,6 +11,7 @@ export interface CodexThreadHandle {
     prompt: string;
     schema: z.ZodType<T>;
     signal?: AbortSignal;
+    onEvent?: (event: CodexEvent) => void;
   }): Promise<{ parsed: T; finalResponse: string }>;
 }
 

@@ -17,6 +17,7 @@ import { projectsKeys } from "@/lib/query-keys";
 import { projectRouteId } from "@/lib/project-route";
 import { getResumeDoc } from "@/lib/project";
 import { useChat } from "@/hooks/use-chat";
+import { useProjectEvents } from "@/hooks/use-project-events";
 import { useShellHeaderMeta } from "@/providers/shell-header-context";
 import { useProjectStore } from "@/stores/project-store";
 import { createThread } from "@/rpc/chat-client";
@@ -82,6 +83,22 @@ function ChatPage() {
   const startDeepReview = useStartDeepCoachReview();
   const [deepModalOpen, setDeepModalOpen] = useState(false);
   const [pendingGapId, setPendingGapId] = useState<string | null>(null);
+  const [profileCompleteVisible, setProfileCompleteVisible] = useState(false);
+
+  const events = useProjectEvents(projectId);
+
+  useEffect(() => {
+    const found = events.find(
+      (e) =>
+        e.type === "profile.updated" &&
+        (e.payload as Record<string, unknown> | undefined)?.source === "chat_profile_complete",
+    );
+    if (found) {
+      setProfileCompleteVisible(true);
+      const timer = setTimeout(() => setProfileCompleteVisible(false), 8000);
+      return () => clearTimeout(timer);
+    }
+  }, [events]);
 
   useEffect(() => {
     setActiveThreadId((current) => current ?? threads[0]?.id ?? null);
@@ -211,6 +228,13 @@ function ChatPage() {
       />
 
       <div className="flex min-w-0 flex-1 flex-col gap-3 overflow-y-auto">
+        {profileCompleteVisible ? (
+          <div className="rounded-lg border bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+            <span className="font-semibold">Profile complete.</span> Rebuilding your structured
+            profile and discovering matching roles…
+          </div>
+        ) : null}
+
         <ResumeBanner resumeDoc={resumeDoc} activeThread={activeThread} projectSlug={projectSlug} />
 
         {review ? (

@@ -97,15 +97,18 @@ export async function createProject(title: string): Promise<ProjectSnapshot> {
 export async function uploadProjectResume(
   projectId: string,
   file: File,
+  options?: { runAtsAnalysis?: boolean; runHrAnalysis?: boolean },
 ): Promise<ResumeUploadResult> {
   const formData = new FormData();
   formData.set("file", file);
+  if (options?.runAtsAnalysis === false) formData.set("runAtsAnalysis", "false");
+  if (options?.runHrAnalysis === false) formData.set("runHrAnalysis", "false");
   return post<ResumeUploadResult>(`/api/projects/${projectId}/resume`, undefined, { formData });
 }
 
 export async function pasteProjectResume(
   projectId: string,
-  input: ResumePasteInput,
+  input: ResumePasteInput & { runAtsAnalysis?: boolean; runHrAnalysis?: boolean },
 ): Promise<ResumeUploadResult> {
   return post<ResumeUploadResult>(`/api/projects/${projectId}/resume/paste`, input);
 }

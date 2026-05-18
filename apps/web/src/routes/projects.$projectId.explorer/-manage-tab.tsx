@@ -1,14 +1,14 @@
 import { useMemo } from "react";
 
 import { ChatInput } from "@/components/chat/chat-input";
-import type { ManageTabProps } from "./projects.$projectId.explorer/-explorer.types";
+import type { ManageTabProps } from "./-explorer.types";
 
 function buildSessionStreamItems(
   messages: import("@jobseeker/contracts").ChatMessage[],
-  logs: import("./projects.$projectId.explorer/explorer.types").ExplorerRawLogLine[],
+  logs: import("./-explorer.types").ExplorerRawLogLine[],
   streamingContent: string,
-): import("./projects.$projectId.explorer/explorer.types").SessionStreamItem[] {
-  const items: import("./explorer.types").SessionStreamItem[] = [
+): import("./-explorer.types").SessionStreamItem[] {
+  const items: import("./-explorer.types").SessionStreamItem[] = [
     ...messages.map((message) => ({
       kind: "message" as const,
       id: message.id,

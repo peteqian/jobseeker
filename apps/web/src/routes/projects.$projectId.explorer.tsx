@@ -37,21 +37,27 @@ import { createThread } from "@/rpc/chat-client";
 import { ConfigureRunTab } from "./projects.$projectId.explorer/-configure-run-tab";
 import { DomainConfigForm } from "./projects.$projectId.explorer/-domain-config-form";
 import { ResultsTab } from "./projects.$projectId.explorer/-results-tab";
+import { SessionTab } from "./projects.$projectId.explorer/-session-tab";
 import type {
   ExplorerRunSession,
   ExplorerRawLogLine,
   ExplorerFeedItem,
 } from "./projects.$projectId.explorer/-explorer.types";
 
+type ExplorerTab = "config" | "session" | "results";
+
 interface ExplorerSearch {
-  tab?: "config" | "results";
+  tab?: ExplorerTab;
   job?: string;
 }
 
+const VALID_TABS: readonly ExplorerTab[] = ["config", "session", "results"];
+
 export const Route = createFileRoute("/projects/$projectId/explorer")({
   validateSearch: (search: Record<string, unknown>): ExplorerSearch => {
-    const tab =
-      search.tab === "results" ? "results" : search.tab === "config" ? "config" : undefined;
+    const tab = VALID_TABS.includes(search.tab as ExplorerTab)
+      ? (search.tab as ExplorerTab)
+      : undefined;
     const job = typeof search.job === "string" && search.job.length > 0 ? search.job : undefined;
     return { tab, job };
   },
@@ -146,6 +152,13 @@ function ExplorerPage() {
     [runSessions, activeThreadId],
   );
   const runHistory = useMemo(() => runSessions.map((session) => session.thread), [runSessions]);
+  const latestRunThreadId = useMemo(() => {
+    const runThreads = threads.filter((thread) => thread.title.startsWith("Run "));
+    const latest = [...runThreads].sort(
+      (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+    )[0];
+    return latest?.id ?? null;
+  }, [threads]);
   const liveFeed = useMemo(
     () => toExplorerFeed(events, activeRunTaskId),
     [events, activeRunTaskId],
@@ -212,7 +225,9 @@ function ExplorerPage() {
   const selectedJobId = search.job ?? null;
 
   const handleTabChange = (next: string) => {
-    const tab = next === "results" ? "results" : "config";
+    const tab: ExplorerTab = VALID_TABS.includes(next as ExplorerTab)
+      ? (next as ExplorerTab)
+      : "config";
     void navigate({
       search: (prev) => ({ ...prev, tab, job: tab === "results" ? prev.job : undefined }),
       replace: true,
@@ -311,6 +326,12 @@ function ExplorerPage() {
         <div className="mb-4 flex items-center justify-between">
           <TabsList>
             <TabsTrigger value="config">Configure & Run</TabsTrigger>
+            <TabsTrigger value="session">
+              Session
+              {busyAction === "explorer-discovery" ? (
+                <span className="ml-2 inline-block size-2 animate-pulse rounded-full bg-emerald-500" />
+              ) : null}
+            </TabsTrigger>
             <TabsTrigger value="results">
               Results
               {project.jobs.length > 0 ? (
@@ -351,6 +372,18 @@ function ExplorerPage() {
             onSelectSession={setActiveThreadId}
             logs={rawLogs}
             feed={liveFeed}
+            isRunning={busyAction === "explorer-discovery"}
+          />
+        </TabsContent>
+
+        <TabsContent value="session" className="m-0 min-h-0 flex-1 overflow-hidden">
+          <SessionTab
+            activeThreadId={activeThreadId}
+            latestRunThreadId={latestRunThreadId}
+            onSelectLatestRun={() => {
+              if (latestRunThreadId) setActiveThreadId(latestRunThreadId);
+            }}
+            logs={rawLogs}
             isRunning={busyAction === "explorer-discovery"}
             debugProviders={explorerModelProviders}
             debugSelection={effectiveExplorerSelection}
@@ -656,6 +689,18 @@ function toExplorerRawLogs(
         id: event.id,
         createdAt: event.createdAt,
         text: `[crawl_step${retry}] ${domain} | ${query} | step ${step ?? "?"} | ${action} | ${ok}\nparams=${paramsText}\nresult=${result}`,
+      });
+      continue;
+    }
+
+    if (phase === "codex_event") {
+      const eventKind = typeof payload.eventKind === "string" ? payload.eventKind : "event";
+      const eventText = typeof payload.eventText === "string" ? payload.eventText : "";
+      if (!eventText) continue;
+      out.push({
+        id: event.id,
+        createdAt: event.createdAt,
+        text: `[codex.${eventKind}${retry}] ${domain} | ${query} | step ${step ?? "?"}\n${eventText}`,
       });
     }
   }

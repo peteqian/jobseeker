@@ -9,9 +9,15 @@ import { chatMessages, projects, topicFiles } from "../../db/schema";
 import { makeId } from "../../lib/ids";
 import { logError, logInfo, logWarn } from "../../lib/log";
 import { ensureCodexHomeDir, ensureScopeDir } from "../../lib/paths";
-import { buildSystemPrompt, parseTopicUpdates, stripTopicMarkers } from "../../prompts/chat";
+import {
+  buildSystemPrompt,
+  parseProfileCompleteMarker,
+  parseTopicUpdates,
+  stripTopicMarkers,
+} from "../../prompts/chat";
 import { topicPath, writeTopicFile } from "../topics";
 import { getProfile, getResumeText, getThread, loadTopicsWithContent } from "./repository";
+import { writeProjectRuntimeEvent } from "../runtimeEvents";
 import { emitThreadEvent, updateThreadRuntimeState } from "./runtimeEvents";
 import type { ChatStreamEvent } from "./service";
 
@@ -242,6 +248,18 @@ export function buildSendMessageStream(
         yield event;
       }
 
+      const isProfileComplete = threadScope === "coach" && parseProfileCompleteMarker(fullResponse);
+      if (isProfileComplete && history.length >= 5) {
+        logInfo("chat profile-complete detected", { turnId, threadId, projectId });
+        const { startTask } = await import("../tasks/startTask");
+        void startTask({ projectId, type: "resume_ingest" }).catch(() => {});
+        await writeProjectRuntimeEvent(projectId, "profile.updated", {
+          turnId,
+          threadId,
+          source: "chat_profile_complete",
+        });
+      }
+
       logInfo("chat turn complete", {
         turnId,
         threadId,
@@ -254,6 +272,7 @@ export function buildSendMessageStream(
         assistantMessageId: assistantMsgId,
         responseChars: cleanResponse.length,
         topicUpdates: updatedTopicMetas.length,
+        profileComplete: isProfileComplete,
       });
 
       if (threadScope === "explorer") {
