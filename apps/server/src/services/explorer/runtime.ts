@@ -1,6 +1,6 @@
 import path from "node:path";
 import { z } from "zod";
-import { BrowserSession, runAgent, type AgentOutput } from "@peteqian/browser-agent-sdk";
+import { BrowserSession, runTask, type AgentOutput } from "@peteqian/browser-agent-sdk";
 import { buildDecisionPrompt } from "@peteqian/browser-agent-sdk/internal";
 
 import type { CodexEvent } from "../../provider/codex";
@@ -237,13 +237,26 @@ export async function findJobsForQuery(input: {
         retry,
       });
 
-      return await runAgent({
+      return await runTask({
         task,
         signal: input.signal,
         session,
         page,
-        maxSteps,
-        decide: async (decisionInput) => {
+        getNextAction: async (decisionInput) => {
+          // The SDK no longer takes maxSteps; enforce the explorer's own cap here.
+          if (decisionInput.step > maxSteps) {
+            return {
+              actions: [
+                {
+                  name: "done",
+                  params: { success: false, summary: `Reached max steps (${maxSteps})` },
+                },
+              ],
+              done: true,
+              success: false,
+              summary: `Reached max steps (${maxSteps})`,
+            };
+          }
           const prompt = buildDecisionPrompt(decisionInput);
           logInfo("explorer codex turn start", {
             domain: input.domain,
@@ -495,7 +508,7 @@ export function isAbortLikeError(error: unknown): boolean {
 
 /**
  * Converts the explorer-specific wire schema into the generic browser-agent
- * `Decision` shape consumed by `runAgent`.
+ * `Decision` shape consumed by `runTask`.
  */
 function normalizeDecision(parsed: z.infer<typeof DECISION_WIRE_SCHEMA>): AgentOutput {
   return {
