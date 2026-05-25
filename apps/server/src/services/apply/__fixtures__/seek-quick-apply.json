@@ -1,0 +1,36 @@
+{
+  "fields": [
+    {
+      "id": "rightToWork",
+      "label": "Which of the following statements best describes your right to work in Australia?",
+      "control": "select",
+      "required": true,
+      "options": [
+        "I'm an Australian citizen",
+        "I'm a permanent resident",
+        "I'm a New Zealand citizen",
+        "I have a temporary work visa",
+        "I have a student visa",
+        "I require visa sponsorship"
+      ]
+    },
+    {
+      "id": "yearsExperience",
+      "label": "How many years' experience do you have as a software engineer?",
+      "control": "text",
+      "required": true
+    },
+    {
+      "id": "expectedSalary",
+      "label": "What is your expected annual salary?",
+      "control": "text",
+      "required": false
+    },
+    {
+      "id": "coverNote",
+      "label": "Why do you want to work for us?",
+      "control": "textarea",
+      "required": false
+    }
+  ]
+}

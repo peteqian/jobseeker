@@ -161,6 +161,20 @@ export const profiles = sqliteTable("profiles", {
   updatedAt: text("updated_at").notNull(),
 });
 
+export const applicationAnswers = sqliteTable(
+  "application_answers",
+  {
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    questionKey: text("question_key").notNull(),
+    answer: text("answer").notNull(),
+    source: text("source").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.projectId, table.questionKey] })],
+);
+
 export const chatThreads = sqliteTable("chat_threads", {
   id: text("id").primaryKey(),
   projectId: text("project_id")

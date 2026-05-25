@@ -3,7 +3,7 @@
 ## Task Completion Requirements
 
 - All of `bun fmt`, `bun lint`, and `bun typecheck` must pass before considering tasks completed.
-- NEVER run `bun test`. Always use `bun run test` (runs Vitest).
+- `apps/server` tests run under Bun's runner (`bun test`, wired to the `test` script) so `bun:sqlite`-backed db code is testable. The pure packages (effect-acp, effect-codex-app-server) keep Vitest via their own `test` script.
 
 ## Core Priorities
 
