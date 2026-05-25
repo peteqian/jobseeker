@@ -91,5 +91,6 @@ function emptyProfile(): StructuredProfile {
     },
     searchContext: { effectiveKeywords: [], ineffectiveKeywords: [], discoveredPatterns: [] },
     memory: { clarifications: [], discoveredPreferences: [] },
+    workRights: { citizenship: [], australiaWorkRights: "unspecified" },
   };
 }

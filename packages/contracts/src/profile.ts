@@ -63,6 +63,24 @@ export interface ProfileMemory {
   }[];
 }
 
+/** SEEK-style "right to work in Australia" category. */
+export type AustraliaWorkRight =
+  | "unspecified"
+  | "citizen"
+  | "permanent_resident"
+  | "nz_citizen"
+  | "work_visa"
+  | "student_visa"
+  | "needs_sponsorship";
+
+export interface ProfileWorkRights {
+  /** Citizenship by ISO 3166-1 alpha-2 country code (e.g. "AU", "GB"). */
+  citizenship: string[];
+  australiaWorkRights: AustraliaWorkRight;
+  /** Visa subclass / detail, when on a temporary visa (e.g. "Subclass 482"). */
+  visaDetail?: string;
+}
+
 export interface StructuredProfile {
   version: number;
   updatedAt: string;
@@ -87,6 +105,8 @@ export interface StructuredProfile {
   };
   searchContext: ProfileSearchContext;
   memory: ProfileMemory;
+  /** Work eligibility, used to answer application screening questions. */
+  workRights?: ProfileWorkRights;
 }
 
 export interface UpdateProfileInput {

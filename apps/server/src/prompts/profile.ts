@@ -68,6 +68,11 @@ Schema:
         "discoveredAt": "ISO string"
       }
     ]
+  },
+  "workRights": {
+    "citizenship": ["ISO 3166-1 alpha-2 country codes, e.g. 'AU', 'GB'"],
+    "australiaWorkRights": "unspecified" | "citizen" | "permanent_resident" | "nz_citizen" | "work_visa" | "student_visa" | "needs_sponsorship",
+    "visaDetail": "visa subclass or null"
   }
 }
 
@@ -78,4 +83,5 @@ Rules:
 - Infer location preferences from where they have worked.
 - Generate effective search keywords — terms a recruiter would use to find this person.
 - Discover implicit preferences (e.g. if they only worked at startups, that is a preference).
+- For workRights, only set citizenship/visa fields if the resume or answers state them explicitly. Do NOT guess citizenship from work location. When unstated, use "unspecified" and an empty citizenship list.
 - Output ONLY the JSON object. No markdown, no explanation.`;

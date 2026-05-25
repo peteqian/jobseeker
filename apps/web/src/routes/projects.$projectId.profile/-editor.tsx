@@ -1,29 +1,55 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { useForm, useStore } from "@tanstack/react-form";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Briefcase, MapPin, Plus, Trash2, X } from "lucide-react";
+import { Briefcase, ChevronDown, MapPin, Plus, Trash2, X } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { projectsKeys } from "@/lib/query-keys";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 
 import { saveProjectProfile } from "@/lib/api";
+import { COUNTRIES, countryName } from "@/lib/countries";
 import type {
+  AustraliaWorkRight,
   ProfileExperience,
   ProfileLocation,
   ProfileSkill,
   ProfileTargetRole,
+  ProfileWorkRights,
   ProjectSnapshot,
   StructuredProfile,
 } from "@jobseeker/contracts";
 
 const selectClassName =
   "flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2";
+
+const AU_WORK_RIGHT_OPTIONS: { value: AustraliaWorkRight; label: string }[] = [
+  { value: "unspecified", label: "Not specified" },
+  { value: "citizen", label: "Australian citizen" },
+  { value: "permanent_resident", label: "Permanent resident" },
+  { value: "nz_citizen", label: "New Zealand citizen" },
+  { value: "work_visa", label: "Work visa" },
+  { value: "student_visa", label: "Student visa" },
+  { value: "needs_sponsorship", label: "Requires sponsorship" },
+];
+
+function emptyWorkRights(): ProfileWorkRights {
+  return { citizenship: [], australiaWorkRights: "unspecified" };
+}
 
 interface EditableProfileTargetRole extends ProfileTargetRole {
   _rowId: string;
@@ -33,11 +59,12 @@ interface EditableProfileLocation extends ProfileLocation {
   _rowId: string;
 }
 
-interface EditableProfile extends Omit<StructuredProfile, "targeting"> {
+interface EditableProfile extends Omit<StructuredProfile, "targeting" | "workRights"> {
   targeting: Omit<StructuredProfile["targeting"], "roles" | "locations"> & {
     roles: EditableProfileTargetRole[];
     locations: EditableProfileLocation[];
   };
+  workRights: ProfileWorkRights;
 }
 
 export interface ProfileEditorHandle {
@@ -59,6 +86,7 @@ function createRowId() {
 function toEditableProfile(profile: StructuredProfile): EditableProfile {
   return {
     ...profile,
+    workRights: profile.workRights ?? emptyWorkRights(),
     targeting: {
       ...profile.targeting,
       roles: profile.targeting.roles.map((role) => ({ ...role, _rowId: createRowId() })),
@@ -241,6 +269,7 @@ export const ProfileEditor = forwardRef<ProfileEditorHandle, ProfileEditorProps>
           addSkill={addSkill}
         />
         <PreferredLocationsSection form={form} />
+        <WorkRightsSection form={form} />
         <WorkHistorySection form={form} />
         <CompanyPreferencesSection form={form} />
         <ProfileInsightsSection
@@ -262,6 +291,145 @@ export const ProfileEditor = forwardRef<ProfileEditorHandle, ProfileEditorProps>
 type ProfileForm = typeof useForm<EditableProfile> extends (...args: never[]) => infer T
   ? T
   : never;
+
+function CountryMultiSelect({
+  selected,
+  onChange,
+}: {
+  selected: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const toggle = (code: string) => {
+    onChange(selected.includes(code) ? selected.filter((c) => c !== code) : [...selected, code]);
+  };
+
+  return (
+    <div className="space-y-2">
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger
+          render={
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full justify-between font-normal text-muted-foreground"
+            />
+          }
+        >
+          <span>Add citizenship…</span>
+          <ChevronDown className="size-4 shrink-0 opacity-50" />
+        </PopoverTrigger>
+        <PopoverContent align="start" className="w-72 p-0">
+          <Command>
+            <CommandInput placeholder="Search country…" />
+            <CommandList>
+              <CommandEmpty>No country found.</CommandEmpty>
+              <CommandGroup>
+                {COUNTRIES.map((country) => (
+                  <CommandItem
+                    key={country.code}
+                    value={`${country.name} ${country.code}`}
+                    data-checked={selected.includes(country.code) ? "true" : "false"}
+                    onSelect={() => toggle(country.code)}
+                  >
+                    {country.name}
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            </CommandList>
+          </Command>
+        </PopoverContent>
+      </Popover>
+
+      {selected.length > 0 ? (
+        <div className="flex flex-wrap gap-2">
+          {selected.map((code) => (
+            <Badge key={code} variant="secondary" className="gap-1 pr-1">
+              {countryName(code)}
+              <button
+                type="button"
+                onClick={() => toggle(code)}
+                aria-label={`Remove ${countryName(code)}`}
+                className="text-muted-foreground hover:text-foreground"
+              >
+                <X className="size-3" />
+              </button>
+            </Badge>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function WorkRightsSection({ form }: { form: ProfileForm }) {
+  const auStatus = useStore(form.store, (state) => state.values.workRights.australiaWorkRights);
+  const showVisaDetail = auStatus === "work_visa" || auStatus === "student_visa";
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Work rights</CardTitle>
+        <CardDescription>
+          Used to answer application screening questions. Nothing is submitted without your review.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        <form.Field name="workRights.australiaWorkRights">
+          {(field) => (
+            <div className="space-y-2">
+              <Label htmlFor={field.name}>Right to work in Australia</Label>
+              <select
+                id={field.name}
+                name={field.name}
+                value={field.state.value}
+                onBlur={field.handleBlur}
+                onChange={(event) => field.handleChange(event.target.value as AustraliaWorkRight)}
+                className={selectClassName}
+              >
+                {AU_WORK_RIGHT_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+        </form.Field>
+
+        {showVisaDetail ? (
+          <form.Field name="workRights.visaDetail">
+            {(field) => (
+              <div className="space-y-2">
+                <Label htmlFor={field.name}>Visa detail</Label>
+                <Input
+                  id={field.name}
+                  name={field.name}
+                  value={field.state.value ?? ""}
+                  onBlur={field.handleBlur}
+                  onChange={(event) => field.handleChange(event.target.value)}
+                  placeholder="e.g. Subclass 482"
+                />
+              </div>
+            )}
+          </form.Field>
+        ) : null}
+
+        <form.Field name="workRights.citizenship">
+          {(field) => (
+            <div className="space-y-2">
+              <Label>Citizenship</Label>
+              <CountryMultiSelect
+                selected={field.state.value}
+                onChange={(next) => field.handleChange(next)}
+              />
+            </div>
+          )}
+        </form.Field>
+      </CardContent>
+    </Card>
+  );
+}
 
 function AboutSection({ form }: { form: ProfileForm }) {
   return (
