@@ -40,7 +40,7 @@
         "@jobseeker/contracts": "workspace:*",
         "@openai/codex-sdk": "^0.130.0",
         "@opencode-ai/sdk": "^1.14.18",
-        "@peteqian/browser-agent-sdk": "^0.1.0",
+        "@peteqian/browser-agent-sdk": "^0.1.2",
         "drizzle-orm": "^0.45.2",
         "effect": "4.0.0-beta.45",
         "hono": "^4.10.1",
@@ -545,7 +545,7 @@
 
     "@oxlint/binding-win32-x64-msvc": ["@oxlint/binding-win32-x64-msvc@1.65.0", "", { "os": "win32", "cpu": "x64" }, "sha512-D7L/oBbskLss21bYrRbFuIs81AiSQV+wRzwck54dOkHIlq2qu1xjLz8u6jCqGH8Fltk8bB5DLBpVhE7v/fA8XQ=="],
 
-    "@peteqian/browser-agent-sdk": ["@peteqian/browser-agent-sdk@0.1.0", "", { "dependencies": { "@anthropic-ai/claude-agent-sdk": "^0.2.126", "@anthropic-ai/sdk": "^0.92.0", "@openai/codex-sdk": "^0.128.0", "devtools-protocol": "^0.0.1617013", "openai": "^6.35.0", "ws": "^8.20.0", "zod": "^3.25.76" } }, "sha512-CbOUuhOFY691vTugF6QJKw9JwzCg+9XezQ9x3fcoKuBoUZeE5xlECGNLb2NSU29aEceB3szF07//r9VwQ9QQCg=="],
+    "@peteqian/browser-agent-sdk": ["@peteqian/browser-agent-sdk@0.1.2", "", { "dependencies": { "@anthropic-ai/claude-agent-sdk": "^0.2.126", "@anthropic-ai/sdk": "^0.92.0", "@openai/codex-sdk": "^0.128.0", "devtools-protocol": "^0.0.1617013", "openai": "^6.35.0", "ws": "^8.20.0", "zod": "^3.25.76" } }, "sha512-SSgbN3xO0e3d+KPRyI+jAj9M72dlCETtSs9KRbmWERdajbzqYkLykTpGEtm7HlIxwHiRWgNXuUPcv9IwWC86pw=="],
 
     "@quansync/fs": ["@quansync/fs@1.0.0", "", { "dependencies": { "quansync": "^1.0.0" } }, "sha512-4TJ3DFtlf1L5LDMaM6CanJ/0lckGNtJcMjQ1NAV6zDmA0tEHKZtxNKin8EgPaVX1YzljbxckyT2tJrpQKAtngQ=="],
 

@@ -33,14 +33,6 @@ export function clipRawCodexOutput(raw: string): string {
   return `${raw.slice(0, maxChars)}\n... [truncated ${raw.length - maxChars} chars]`;
 }
 
-export function clipPromptForLog(prompt: string): string {
-  const maxChars = Number.parseInt(process.env.EXPLORER_PROMPT_LOG_MAX_CHARS ?? "4000", 10) || 4000;
-  if (prompt.length <= maxChars) {
-    return prompt;
-  }
-  return `${prompt.slice(0, maxChars)}\n... [truncated ${prompt.length - maxChars} chars]`;
-}
-
 export function buildAgentTask(input: {
   domain: string;
   freshness: ExplorerFreshness;
@@ -74,7 +66,8 @@ export function buildAgentTask(input: {
   lines.push(
     "Keyword search box is only for the role/title query. Location and work arrangement belong in their dedicated inputs or filters.",
     "Return only currently visible, real job listings from this site.",
-    "Emit each job via foundJobs as soon as you can see its title, company, and URL.",
+    "Call the report_job action for each listing as soon as its title, company, and URL are visible.",
+    "When the results layout is stable, call save_trajectory once so future runs can replay it without the agent.",
     "Set done=true with success=true when you have enough listings, or success=false with a summary if blocked.",
   );
   return lines.join("\n");

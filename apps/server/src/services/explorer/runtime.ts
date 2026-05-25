@@ -1,16 +1,18 @@
 import path from "node:path";
-import { z } from "zod";
-import { BrowserSession, runTask, type AgentOutput } from "@peteqian/browser-agent-sdk";
-import { buildDecisionPrompt } from "@peteqian/browser-agent-sdk/internal";
+import {
+  BrowserSession,
+  createCodexCliDecide,
+  runTask,
+  type GetNextActionFn,
+} from "@peteqian/browser-agent-sdk";
 
-import type { CodexEvent } from "../../provider/codex";
 import type { DistilledTrajectory, FoundJob } from "./jobTypes";
 import type { ExplorerFreshness, NavigationContext } from "@jobseeker/contracts";
 
 import { dataDir } from "../../env";
-import { createCodexThread, ensureCodexAuthInHome } from "../../lib/codex";
 import { logInfo, logWarn } from "../../lib/log";
 import { ensureCodexHomeDir, ensureScopeDir } from "../../lib/paths";
+import { buildExplorerActions } from "./actions";
 import {
   buildQueryProfileKey,
   getLaunchOptions,
@@ -24,79 +26,9 @@ import {
   recordPageMemorySuccess,
   savePageMemory,
 } from "./memory";
-import {
-  buildAgentTask,
-  clipPromptForLog,
-  clipRawCodexOutput,
-  summarizeStepParams,
-  toDomainUrl,
-} from "./prompting";
+import { buildAgentTask, clipRawCodexOutput, summarizeStepParams, toDomainUrl } from "./prompting";
 import { replayTrajectory } from "./replay";
 import type { ExplorerProgress } from "./types";
-
-const FOUND_JOB_SCHEMA = z.object({
-  title: z.string().min(1),
-  company: z.string().min(1).default("Unknown company"),
-  location: z.string().min(1).default("Unknown location"),
-  url: z.string().min(1),
-  summary: z.string().min(1).default("No summary provided."),
-  salary: z.string().nullable(),
-});
-
-type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
-
-const JSON_VALUE_SCHEMA: z.ZodType<JsonValue> = z.lazy(() =>
-  z.union([
-    z.string(),
-    z.number(),
-    z.boolean(),
-    z.null(),
-    z.array(JSON_VALUE_SCHEMA),
-    z.object({}).catchall(JSON_VALUE_SCHEMA),
-  ]),
-);
-
-const JSON_OBJECT_SCHEMA = z.object({}).catchall(JSON_VALUE_SCHEMA);
-const NULLABLE_STRING_SCHEMA = z.string().nullable();
-const NULLABLE_BOOLEAN_SCHEMA = z.boolean().nullable();
-
-const EXTRACTOR_FIELD_ENTRY_SCHEMA = z.object({
-  name: z.string().min(1),
-  selector: z.string(),
-  attr: z.string().nullable(),
-});
-
-const DECISION_WIRE_SCHEMA = z.object({
-  thought: NULLABLE_STRING_SCHEMA,
-  actions: z
-    .array(
-      z.object({
-        name: z.string(),
-        params: JSON_OBJECT_SCHEMA.default({}),
-      }),
-    )
-    .max(5)
-    .default([]),
-  foundJobs: z.array(FOUND_JOB_SCHEMA),
-  distilledTrajectory: z.union([
-    z.object({
-      actions: z.array(
-        z.object({
-          name: z.string(),
-          paramsTemplate: JSON_OBJECT_SCHEMA.default({}),
-        }),
-      ),
-      extractor: z.object({
-        listingSelector: z.string(),
-        fields: z.array(EXTRACTOR_FIELD_ENTRY_SCHEMA),
-      }),
-    }),
-    z.null(),
-  ]),
-  done: z.boolean().default(false),
-  summary: NULLABLE_STRING_SCHEMA,
-  success: NULLABLE_BOOLEAN_SCHEMA,
-});
 
 /**
  * Executes one explorer `(domain, query)` run against a real browser session.
@@ -142,7 +74,6 @@ export async function findJobsForQuery(input: {
   const runOnce = async (launchOptions: ReturnType<typeof getLaunchOptions>, retry: boolean) => {
     const codexCwd = ensureScopeDir(input.projectSlug, "explorer");
     const codexHome = ensureCodexHomeDir(input.projectSlug, "explorer", `explorer_${input.domain}`);
-    ensureCodexAuthInHome(codexHome, input.codexAuthHome);
 
     logInfo("explorer query started", {
       domain: input.domain,
@@ -217,23 +148,90 @@ export async function findJobsForQuery(input: {
         });
       }
 
-      const handle = createCodexThread({
+      // Use the codex CLI adapter directly rather than `createDecide`: only the
+      // CLI adapter threads `codexHome`/`cwd`, which give each (domain,query) run
+      // its own isolated codex auth home and working dir (it copies auth from
+      // `codexAuthHome` on first use).
+      const decide = createCodexCliDecide({
         binaryPath: input.codexBinaryPath,
         model: input.model,
-        reasoningEffort: input.effort,
+        effort: input.effort,
         cwd: codexCwd,
         codexHome,
+        codexAuthHome: input.codexAuthHome,
+        onRaw: (raw, step) => {
+          void input.onProgress?.({
+            phase: "codex_raw",
+            domain: input.domain,
+            query: input.query,
+            currentQuery: input.currentQuery,
+            totalQueries: input.totalQueries,
+            step,
+            raw: clipRawCodexOutput(raw),
+            retry,
+          });
+        },
       });
-      logInfo("explorer codex thread ready", {
+
+      // The SDK loop has no max-step option, so enforce the explorer cap here:
+      // once the step index passes the limit, short-circuit to a failed `done`.
+      const guardedDecide: GetNextActionFn = async (decisionInput, sig) => {
+        if (decisionInput.step > maxSteps) {
+          return {
+            actions: [
+              {
+                name: "done",
+                params: { success: false, summary: `Reached max steps (${maxSteps})` },
+              },
+            ],
+            done: true,
+            success: false,
+            summary: `Reached max steps (${maxSteps})`,
+          };
+        }
+        return decide(decisionInput, sig);
+      };
+
+      const actions = buildExplorerActions({
+        signal: input.signal,
+        onFoundJob: input.onFoundJob,
+        saveTrajectory: async (trajectory: DistilledTrajectory) => {
+          if (input.signal.aborted) return { saved: false, reason: "aborted" };
+          const validated = await validateTrajectoryOnFreshSession({
+            trajectory,
+            query: input.query,
+            startUrl: url,
+            signal: input.signal,
+          });
+          if (!validated.success) {
+            logWarn("explorer distilled trajectory validation failed", {
+              domain: input.domain,
+              query: input.query,
+              reason: validated.reason,
+            });
+            return { saved: false, reason: validated.reason };
+          }
+          await savePageMemory({
+            fingerprint: landingFingerprint,
+            urlPattern,
+            trajectory,
+            sampleJobs: validated.jobs.slice(0, 3),
+          });
+          logInfo("explorer saved page memory", {
+            domain: input.domain,
+            query: input.query,
+            fingerprint: landingFingerprint,
+            sampleJobs: validated.jobs.length,
+          });
+          return { saved: true };
+        },
+      });
+
+      logInfo("explorer agent ready", {
         domain: input.domain,
         query: input.query,
         model: input.model,
         effort: input.effort,
-        schemaNotes: {
-          foundJobUrl: "plain-string",
-          extractorFields: "entry-array-normalized-post-parse",
-          optionalFields: "required-plus-nullable",
-        },
         retry,
       });
 
@@ -242,126 +240,8 @@ export async function findJobsForQuery(input: {
         signal: input.signal,
         session,
         page,
-        getNextAction: async (decisionInput) => {
-          // The SDK no longer takes maxSteps; enforce the explorer's own cap here.
-          if (decisionInput.step > maxSteps) {
-            return {
-              actions: [
-                {
-                  name: "done",
-                  params: { success: false, summary: `Reached max steps (${maxSteps})` },
-                },
-              ],
-              done: true,
-              success: false,
-              summary: `Reached max steps (${maxSteps})`,
-            };
-          }
-          const prompt = buildDecisionPrompt(decisionInput);
-          logInfo("explorer codex turn start", {
-            domain: input.domain,
-            query: input.query,
-            step: decisionInput.step,
-            promptChars: prompt.length,
-            historyCount: decisionInput.history.length,
-            retry,
-          });
-          let parsed: z.infer<typeof DECISION_WIRE_SCHEMA>;
-          let finalResponse: string;
-          try {
-            ({ parsed, finalResponse } = await handle.runTurn({
-              prompt,
-              schema: DECISION_WIRE_SCHEMA,
-              signal: input.signal,
-              onEvent: (event) => {
-                const summary = summarizeCodexEvent(event);
-                if (!summary) return;
-                void input.onProgress?.({
-                  phase: "codex_event",
-                  domain: input.domain,
-                  query: input.query,
-                  currentQuery: input.currentQuery,
-                  totalQueries: input.totalQueries,
-                  step: decisionInput.step,
-                  eventKind: summary.kind,
-                  eventText: summary.text,
-                  retry,
-                });
-              },
-            }));
-          } catch (error) {
-            logWarn("explorer codex turn failed", {
-              domain: input.domain,
-              query: input.query,
-              step: decisionInput.step,
-              promptChars: prompt.length,
-              promptPreview: clipPromptForLog(prompt),
-              retry,
-              error,
-            });
-            throw error;
-          }
-          logInfo("explorer codex turn completed", {
-            domain: input.domain,
-            query: input.query,
-            step: decisionInput.step,
-            responseChars: finalResponse.length,
-            actionCount: parsed.actions.length,
-            foundJobs: parsed.foundJobs?.length ?? 0,
-            done: parsed.done,
-            retry,
-          });
-          void input.onProgress?.({
-            phase: "codex_raw",
-            domain: input.domain,
-            query: input.query,
-            currentQuery: input.currentQuery,
-            totalQueries: input.totalQueries,
-            step: decisionInput.step,
-            raw: clipRawCodexOutput(finalResponse),
-            retry,
-          });
-
-          const jobs = extractFoundJobs(parsed);
-          if (jobs.length > 0) {
-            for (const job of jobs) {
-              if (input.signal.aborted) break;
-              await input.onFoundJob?.(job);
-            }
-          }
-
-          const trajectory = extractDistilledTrajectory(parsed);
-          if (trajectory && !input.signal.aborted) {
-            const validated = await validateTrajectoryOnFreshSession({
-              trajectory,
-              query: input.query,
-              startUrl: url,
-              signal: input.signal,
-            });
-            if (validated.success) {
-              await savePageMemory({
-                fingerprint: landingFingerprint,
-                urlPattern,
-                trajectory,
-                sampleJobs: validated.jobs.slice(0, 3),
-              });
-              logInfo("explorer saved page memory", {
-                domain: input.domain,
-                query: input.query,
-                fingerprint: landingFingerprint,
-                sampleJobs: validated.jobs.length,
-              });
-            } else {
-              logWarn("explorer distilled trajectory validation failed", {
-                domain: input.domain,
-                query: input.query,
-                reason: validated.reason,
-              });
-            }
-          }
-
-          return normalizeDecision(parsed);
-        },
+        getNextAction: guardedDecide,
+        actions,
         onStep: (step) => {
           logInfo("explorer crawl step", {
             domain: input.domain,
@@ -504,93 +384,4 @@ export function isAbortLikeError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   const normalized = message.toLowerCase();
   return normalized.includes("aborted") || normalized.includes("aborterror");
-}
-
-/**
- * Converts the explorer-specific wire schema into the generic browser-agent
- * `Decision` shape consumed by `runTask`.
- */
-function normalizeDecision(parsed: z.infer<typeof DECISION_WIRE_SCHEMA>): AgentOutput {
-  return {
-    thought: parsed.thought ?? undefined,
-    actions: parsed.actions,
-    done: parsed.done,
-    summary: parsed.summary ?? undefined,
-    success: parsed.success ?? undefined,
-  };
-}
-
-/**
- * Reduces a Codex SDK event into a compact `{ kind, text }` for UI streaming.
- *
- * Filters to events that move the user's mental model forward (reasoning,
- * commands, web searches, errors) and drops the noisy `item.started`/`updated`
- * deltas for agent_message — those are emitted again as the final `codex_raw`
- * once the structured turn validates.
- */
-function summarizeCodexEvent(event: CodexEvent): { kind: string; text: string } | null {
-  if (event.type === "turn.completed") {
-    const usage = event.usage;
-    if (!usage) return null;
-    return {
-      kind: "turn_completed",
-      text: `tokens in=${usage.inputTokens ?? "?"} out=${usage.outputTokens ?? "?"}`,
-    };
-  }
-  if (event.type !== "item.completed") return null;
-  const item = event.item;
-  switch (item.type) {
-    case "reasoning":
-      return { kind: "reasoning", text: clipText(item.text, 400) };
-    case "command_execution":
-      return { kind: "command", text: clipText(item.command, 200) };
-    case "web_search":
-      return { kind: "web_search", text: item.query };
-    case "mcp_tool_call":
-      return { kind: "mcp", text: `${item.server}.${item.tool}` };
-    case "todo_list":
-      return {
-        kind: "todo",
-        text: `${item.items.filter((i) => i.done).length}/${item.items.length} done`,
-      };
-    case "error":
-      return { kind: "error", text: clipText(item.message, 400) };
-    default:
-      return null;
-  }
-}
-
-function clipText(text: string, max: number): string {
-  if (text.length <= max) return text;
-  return `${text.slice(0, max)}…`;
-}
-
-/** Lifts foundJobs from the explorer wire schema into the canonical FoundJob shape. */
-function extractFoundJobs(parsed: z.infer<typeof DECISION_WIRE_SCHEMA>): FoundJob[] {
-  if (parsed.foundJobs.length === 0) return [];
-  return parsed.foundJobs.map((job) => ({
-    ...job,
-    salary: job.salary ?? undefined,
-  }));
-}
-
-/** Lifts distilledTrajectory from the explorer wire schema into the canonical shape. */
-function extractDistilledTrajectory(
-  parsed: z.infer<typeof DECISION_WIRE_SCHEMA>,
-): DistilledTrajectory | undefined {
-  if (!parsed.distilledTrajectory) return undefined;
-  return {
-    actions: parsed.distilledTrajectory.actions,
-    extractor: {
-      listingSelector: parsed.distilledTrajectory.extractor.listingSelector,
-      fields: Object.fromEntries(
-        parsed.distilledTrajectory.extractor.fields.map((entry) => [
-          entry.name,
-          entry.attr !== null
-            ? { selector: entry.selector, attr: entry.attr }
-            : { selector: entry.selector },
-        ]),
-      ),
-    },
-  };
 }
