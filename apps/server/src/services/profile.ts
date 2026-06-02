@@ -89,6 +89,7 @@ function emptyProfile(): StructuredProfile {
     updatedAt: timestamp,
     identity: { summary: "" },
     experiences: [],
+    education: [],
     projects: [],
     skills: [],
     targeting: {

@@ -6,6 +6,7 @@ export type TaskType =
   | "job_discovery"
   | "resume_tailoring"
   | "cover_letter_tailoring"
+  | "tailoring_review"
   | "coach_review"
   | "ats_analysis"
   | "hr_analysis"

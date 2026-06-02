@@ -12,6 +12,7 @@ import { runAtsAnalysis } from "../ats/analysis";
 import { runHrAnalysis } from "../hr/analysis";
 import { buildAndSaveProfile, createQuestionCardsIfMissing } from "./resumeIngest";
 import { runTailoringTask } from "./tailoring";
+import { runReviewTask } from "./reviewTask";
 
 export interface TaskRunResult {
   jobsCreated?: number;
@@ -115,6 +116,20 @@ export async function runTask(
       taskId,
       jobId: input.jobId,
       kind: input.type,
+      modelSelection: input.modelSelection,
+    });
+    return {};
+  }
+
+  if (input.type === "tailoring_review") {
+    // `input` carries which tailored doc to review.
+    const kind =
+      input.input === "cover_letter_tailoring" ? "cover_letter_tailoring" : "resume_tailoring";
+    await runReviewTask({
+      projectId: input.projectId,
+      taskId,
+      jobId: input.jobId,
+      kind,
       modelSelection: input.modelSelection,
     });
     return {};

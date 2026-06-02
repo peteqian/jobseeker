@@ -95,12 +95,54 @@ export interface JobRecord {
   createdAt: string;
 }
 
+/**
+ * How well the candidate fits a job, judged by reading the full job description
+ * against the whole profile. `pending` means the match pass has not scored it
+ * yet (the row exists, the LLM verdict is still in flight).
+ */
+export type MatchLevel = "exact" | "partial" | "no_match" | "pending";
+
 export interface JobMatch {
   jobId: string;
   projectId: string;
+  /** Primary signal. `score` is kept only as a secondary sort within a level. */
+  level: MatchLevel;
   score: number;
   reasons: string[];
   gaps: string[];
+}
+
+export interface TailoringIssue {
+  severity: "high" | "medium" | "low";
+  issue: string;
+  fix: string;
+}
+
+/**
+ * A recruiter's verdict on a tailored document, stored per job + kind and
+ * surfaced next to the document so the user sees what was flagged.
+ */
+export interface TailoringReview {
+  projectId: string;
+  jobId: string;
+  /** Matches the tailoring TaskType: "resume_tailoring" | "cover_letter_tailoring". */
+  kind: string;
+  documentId: string;
+  /** 0-100 interview-readiness for this job. */
+  score: number;
+  issues: TailoringIssue[];
+  createdAt: string;
+}
+
+/** One past recruiter review, kept so the user can see score history per doc. */
+export interface TailoringReviewHistoryEntry {
+  id: string;
+  jobId: string;
+  kind: string;
+  documentId: string;
+  score: number;
+  issues: TailoringIssue[];
+  createdAt: string;
 }
 
 export interface RuntimeEvent<TPayload = Record<string, unknown>> {
@@ -123,6 +165,8 @@ export interface ProjectSnapshot {
   questionHistory: QuestionAnswerRecord[];
   jobs: JobRecord[];
   jobMatches: JobMatch[];
+  tailoringReviews: TailoringReview[];
+  tailoringReviewHistory: TailoringReviewHistoryEntry[];
   explorer: ExplorerConfigRecord;
   topicFiles: TopicFileMeta[];
   profile: StructuredProfile | null;

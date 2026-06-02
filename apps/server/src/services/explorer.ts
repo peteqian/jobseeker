@@ -12,6 +12,7 @@ import { deleteOldExplorerJobs, saveDiscoveredJob } from "./explorer/persist";
 import { getEnabledDomains, getSearchQueries, type QuerySource } from "./explorer/queryPlanning";
 import { findJobsForQuery, isAbortLikeError } from "./explorer/runtime";
 import type { ExplorerProgress, ExplorerRunOptions } from "./explorer/types";
+import { runMatchingPass, type MatchPassJob } from "./match/runMatchingPass";
 
 export type { ExplorerProgress, ExplorerRunOptions } from "./explorer/types";
 
@@ -122,6 +123,9 @@ export async function runExplorerDiscovery(
 
   const runStartedAt = new Date().toISOString();
   const seenUrls = new Set<string>();
+  // New jobs collected during the crawl, matched in a single pass afterwards so
+  // the crawl stays fast and the costly full-JD reads run with bounded fan-out.
+  const newJobs: MatchPassJob[] = [];
   let jobsCreated = 0;
   const totalQueries = plannedRuns.length;
   // Sequential (the default) runs one browser at a time; parallel fans out up
@@ -176,10 +180,20 @@ export async function runExplorerDiscovery(
 
     const persistFound = async (job: FoundJob) => {
       if (controller.signal.aborted) return;
-      const result = await saveDiscoveredJob({ projectId, profile, job, seenUrls });
+      const result = await saveDiscoveredJob({ projectId, job, seenUrls });
       if (!result) return;
+      newJobs.push({
+        jobId: result.jobId,
+        url: result.url,
+        title: job.title,
+        company: job.company,
+        location: job.location,
+        summary: job.summary,
+      });
       pairJobsFound += 1;
       jobsCreated += 1;
+      // The match level is filled in by the post-crawl pass; the list shows the
+      // job immediately as "pending" until then.
       await options?.onProgress?.({
         phase: "job_found",
         domain: run.domain.domain,
@@ -187,9 +201,6 @@ export async function runExplorerDiscovery(
         currentQuery: index + 1,
         totalQueries,
         job,
-        score: result.score,
-        reasons: result.reasons,
-        gaps: result.gaps,
       });
     };
 
@@ -252,6 +263,18 @@ export async function runExplorerDiscovery(
 
   if (!options?.signal?.aborted && jobsCreated > 0) {
     await deleteOldExplorerJobs(projectId, runStartedAt);
+  }
+
+  // Read each new job's full description and assign a match level against the
+  // profile. Runs after the crawl so results show fast, then levels fill in.
+  if (!options?.signal?.aborted && newJobs.length > 0) {
+    await runMatchingPass({
+      projectId,
+      profile,
+      jobs: newJobs,
+      modelSelection: options?.modelSelection,
+      signal: options?.signal,
+    });
   }
 
   return {

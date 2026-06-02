@@ -9,7 +9,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { JobResultCardProps } from "../-explorer.types";
-import { getMatchTier } from "./types";
+import { getMatchLevelMeta } from "./types";
 
 export function JobResultCard({
   job,
@@ -48,8 +48,12 @@ export function JobResultCard({
           <div className="flex items-start gap-2">
             <h3 className="flex-1 font-medium leading-snug line-clamp-2">{job.title}</h3>
             {match ? (
-              <Badge variant={getMatchTier(match.score).variant} className="shrink-0 text-xs">
-                {getMatchTier(match.score).label} · {(match.score * 100).toFixed(0)}%
+              <Badge variant={getMatchLevelMeta(match.level).variant} className="shrink-0 text-xs">
+                {match.level === "pending" ? (
+                  <Loader2 className="size-3 mr-1 animate-spin" />
+                ) : null}
+                {getMatchLevelMeta(match.level).label}
+                {match.level !== "pending" && match.score > 0 ? ` · ${match.score}` : ""}
               </Badge>
             ) : null}
           </div>

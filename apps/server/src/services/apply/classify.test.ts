@@ -28,6 +28,12 @@ describe("classifyField", () => {
     expect(classifyField("Expected salary?")).toBe("salary_expectation");
   });
 
+  it("maps education / qualification questions", () => {
+    expect(classifyField("What is your highest qualification?")).toBe("highest_education");
+    expect(classifyField("Highest level of education")).toBe("highest_education");
+    expect(classifyField("Do you have a degree?")).toBe("highest_education");
+  });
+
   it("falls back to a slug for unclassified labels", () => {
     expect(questionKeyFor("Describe a hard project you led")).toBe(
       "describe_a_hard_project_you_led",

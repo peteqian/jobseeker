@@ -5,10 +5,12 @@ import { projectRouteId } from "@/lib/project-route";
 import { useProjectStore } from "@/stores/project-store";
 import { useProjectEvents } from "@/hooks/use-project-events";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
+import type { MatchLevel } from "@jobseeker/contracts";
 import type { ResultsTabProps } from "./-explorer.types";
 import { JobResultCard } from "./-components/job-result-card";
 import { JobDetailPane } from "./-components/job-detail-pane";
+import { getMatchLevelMeta } from "./-components/types";
 
 function extractHost(url: string): string | null {
   try {
@@ -35,7 +37,11 @@ export function ResultsTab({
 }: ResultsTabProps) {
   const [selectedDomain, setSelectedDomain] = useState<string | "all">("all");
   const [keywordFilter, setKeywordFilter] = useState("");
-  const [minScore, setMinScore] = useState(0);
+  // Which match levels the user accepts into the list. Default hides no-match.
+  // Jobs still being matched (`pending`) always show so progress is visible.
+  const [acceptedLevels, setAcceptedLevels] = useState<Set<MatchLevel>>(
+    () => new Set<MatchLevel>(["exact", "partial"]),
+  );
   const [generating, setGenerating] = useState<Record<string, Set<GenerateType>>>({});
   const project = useProjectStore((state) => state.currentProject);
   const projectSlug = project ? projectRouteId(project) : projectId;
@@ -90,17 +96,27 @@ export function ResultsTab({
       );
     }
 
-    if (minScore > 0) {
-      list = list.filter((job) => (matchByJobId.get(job.id)?.score ?? 0) >= minScore);
-    }
+    list = list.filter((job) => {
+      const level = matchByJobId.get(job.id)?.level ?? "pending";
+      // Pending always shows (matching in progress); others honour the toggle.
+      return level === "pending" || acceptedLevels.has(level);
+    });
 
-    return list
-      .slice()
-      .sort(
-        (left, right) =>
-          (matchByJobId.get(right.id)?.score ?? 0) - (matchByJobId.get(left.id)?.score ?? 0),
-      );
-  }, [jobs, jobsByDomain, selectedDomain, keywordFilter, minScore, matchByJobId]);
+    return list.slice().sort((left, right) => {
+      const leftMatch = matchByJobId.get(left.id);
+      const rightMatch = matchByJobId.get(right.id);
+      const rankDelta =
+        getMatchLevelMeta(leftMatch?.level ?? "pending").rank -
+        getMatchLevelMeta(rightMatch?.level ?? "pending").rank;
+      if (rankDelta !== 0) return rankDelta;
+      return (rightMatch?.score ?? 0) - (leftMatch?.score ?? 0);
+    });
+  }, [jobs, jobsByDomain, selectedDomain, keywordFilter, acceptedLevels, matchByJobId]);
+
+  const matchingCount = useMemo(
+    () => jobs.filter((job) => (matchByJobId.get(job.id)?.level ?? "pending") === "pending").length,
+    [jobs, matchByJobId],
+  );
 
   const selectedJob = jobs.find((job) => job.id === selectedJobId);
   const selectedMatch = selectedJobId ? matchByJobId.get(selectedJobId) : undefined;
@@ -214,24 +230,35 @@ export function ResultsTab({
             ) : null}
           </select>
           <div className="flex items-center gap-1.5">
-            <Label htmlFor="min-score" className="text-xs text-muted-foreground">
-              Min
-            </Label>
-            <Input
-              id="min-score"
-              type="number"
-              min={0}
-              max={1}
-              step={0.1}
-              value={minScore}
-              onChange={(event) => {
-                const value = Number.parseFloat(event.target.value);
-                setMinScore(Number.isFinite(value) ? value : 0);
-              }}
-              className="w-16"
-            />
+            {(["exact", "partial", "no_match"] as const).map((level) => {
+              const active = acceptedLevels.has(level);
+              return (
+                <Button
+                  key={level}
+                  type="button"
+                  size="sm"
+                  variant={active ? "default" : "outline"}
+                  className="h-9"
+                  onClick={() =>
+                    setAcceptedLevels((current) => {
+                      const next = new Set(current);
+                      if (next.has(level)) next.delete(level);
+                      else next.add(level);
+                      return next;
+                    })
+                  }
+                >
+                  {getMatchLevelMeta(level).label}
+                </Button>
+              );
+            })}
           </div>
         </div>
+        {matchingCount > 0 ? (
+          <div className="border-b px-3 py-1.5 text-xs text-muted-foreground">
+            Matching {matchingCount} {matchingCount === 1 ? "job" : "jobs"} against your profile…
+          </div>
+        ) : null}
 
         <div className="min-h-0 flex-1 overflow-y-auto p-3">
           {visibleJobs.length === 0 ? (

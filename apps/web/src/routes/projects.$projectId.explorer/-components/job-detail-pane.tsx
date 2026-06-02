@@ -14,7 +14,7 @@ import { downloadMarkdownPdf } from "@/lib/resume-pdf";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import { getMatchTier } from "./types";
+import { getMatchLevelMeta } from "./types";
 
 interface ApplyStatus {
   tone: "info" | "success" | "error" | "muted";
@@ -90,8 +90,9 @@ export function JobDetailPane({
 
       <div className="flex flex-wrap items-center gap-2">
         {match ? (
-          <Badge variant={getMatchTier(match.score).variant}>
-            {getMatchTier(match.score).label} · {(match.score * 100).toFixed(0)}%
+          <Badge variant={getMatchLevelMeta(match.level).variant}>
+            {getMatchLevelMeta(match.level).label}
+            {match.level !== "pending" && match.score > 0 ? ` · ${match.score}` : ""}
           </Badge>
         ) : null}
         <div className="ml-auto flex items-center gap-2">

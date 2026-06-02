@@ -64,7 +64,21 @@ export function deriveAnswersFromProfile(profile: StructuredProfile): DerivedAns
   const salary = formatSalary(profile.targeting.salaryExpectation);
   if (salary) derived.push({ key: "salary_expectation", answer: salary, source: "profile" });
 
+  const education = formatHighestEducation(profile.education);
+  if (education) derived.push({ key: "highest_education", answer: education, source: "profile" });
+
   return derived;
+}
+
+/** The most recent qualification, formatted for a screening answer. */
+function formatHighestEducation(education: StructuredProfile["education"]): string | null {
+  if (!education || education.length === 0) return null;
+  // Most recent by end date; fall back to declared order when undated.
+  const latest = [...education].sort((a, b) => (b.endDate ?? "").localeCompare(a.endDate ?? ""))[0];
+  if (!latest.degree && !latest.institution) return null;
+  const field = latest.field ? ` in ${latest.field}` : "";
+  const institution = latest.institution ? `, ${latest.institution}` : "";
+  return `${latest.degree}${field}${institution}`.trim();
 }
 
 function formatSalary(salary: StructuredProfile["targeting"]["salaryExpectation"]): string | null {

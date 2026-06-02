@@ -1,17 +1,27 @@
-interface MatchTier {
+import type { MatchLevel } from "@jobseeker/contracts";
+
+interface MatchLevelMeta {
   label: string;
   variant: "default" | "secondary" | "outline" | "destructive";
   toneClass: string;
+  /** Sort rank: lower sorts first (exact → partial → pending → no_match). */
+  rank: number;
 }
 
-export function getMatchTier(score: number): MatchTier {
-  if (score >= 0.85)
-    return { label: "Excellent match", variant: "default", toneClass: "text-emerald-600" };
-  if (score >= 0.7)
-    return { label: "Strong match", variant: "default", toneClass: "text-green-600" };
-  if (score >= 0.5)
-    return { label: "Good match", variant: "secondary", toneClass: "text-amber-600" };
-  if (score >= 0.3)
-    return { label: "Partial match", variant: "outline", toneClass: "text-orange-600" };
-  return { label: "Weak match", variant: "outline", toneClass: "text-muted-foreground" };
+export function getMatchLevelMeta(level: MatchLevel): MatchLevelMeta {
+  switch (level) {
+    case "exact":
+      return { label: "Exact match", variant: "default", toneClass: "text-emerald-600", rank: 0 };
+    case "partial":
+      return { label: "Partial match", variant: "secondary", toneClass: "text-amber-600", rank: 1 };
+    case "pending":
+      return {
+        label: "Matching…",
+        variant: "outline",
+        toneClass: "text-muted-foreground",
+        rank: 2,
+      };
+    case "no_match":
+      return { label: "No match", variant: "outline", toneClass: "text-muted-foreground", rank: 3 };
+  }
 }

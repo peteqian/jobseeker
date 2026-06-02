@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
 import {
+  normalizeEducation,
   normalizeExperience,
   normalizeWorkRights,
   type ProfilePointDetail,
@@ -22,6 +23,7 @@ export async function readProjectProfile(projectId: string): Promise<StructuredP
     ...profile,
     workRights: normalizeWorkRights(profile.workRights),
     experiences: profile.experiences.map(normalizeExperience),
+    education: (profile.education ?? []).map(normalizeEducation),
     projects: profile.projects ?? [],
     pointDetails: profile.pointDetails ?? [],
   };

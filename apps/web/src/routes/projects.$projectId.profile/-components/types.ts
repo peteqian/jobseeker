@@ -2,10 +2,12 @@ import { useForm } from "@tanstack/react-form";
 
 import {
   computeYearsOfExperience,
+  normalizeEducation,
   normalizeExperience,
   normalizeWorkRights,
 } from "@jobseeker/contracts";
 import type {
+  ProfileEducation,
   ProfileExperience,
   ProfileLocation,
   ProfileProject,
@@ -49,9 +51,10 @@ export interface EditableProfileWorkRightEntry extends ProfileWorkRightEntry {
 
 export interface EditableProfile extends Omit<
   StructuredProfile,
-  "targeting" | "workRights" | "projects"
+  "targeting" | "workRights" | "projects" | "education"
 > {
   projects: ProfileProject[];
+  education: ProfileEducation[];
   targeting: Omit<StructuredProfile["targeting"], "roles" | "locations"> & {
     roles: EditableProfileTargetRole[];
     locations: EditableProfileLocation[];
@@ -71,6 +74,7 @@ export function toEditableProfile(profile: StructuredProfile): EditableProfile {
   return {
     ...profile,
     experiences: profile.experiences.map(normalizeExperience),
+    education: (profile.education ?? []).map(normalizeEducation),
     projects: profile.projects ?? [],
     workRights: {
       ...workRights,
@@ -135,6 +139,10 @@ export function createEmptyExperience(isCurrent = false): ProfileExperience {
 
 export function createEmptyProject(): ProfileProject {
   return { id: crypto.randomUUID(), name: "", description: "", skillsUsed: [] };
+}
+
+export function createEmptyEducation(): ProfileEducation {
+  return { id: crypto.randomUUID(), institution: "", degree: "", isCurrent: false };
 }
 
 // Where the AI picked up a discovered preference — disambiguates the source

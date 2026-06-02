@@ -16,6 +16,7 @@ export type SemanticKey =
   | "salary_expectation"
   | "notice_period"
   | "availability"
+  | "highest_education"
   | "motivation";
 
 interface Matcher {
@@ -43,6 +44,13 @@ const MATCHERS: Matcher[] = [
   { key: "salary_expectation", all: ["expected", "remuneration"] },
   { key: "visa_detail", all: ["visa"] },
   { key: "citizenship", all: ["citizen"] },
+  // Highest education / qualification, before the broad "name" rule.
+  { key: "highest_education", all: ["highest", "qualification"] },
+  { key: "highest_education", all: ["highest", "education"] },
+  { key: "highest_education", all: ["level of education"] },
+  { key: "highest_education", all: ["qualification"] },
+  { key: "highest_education", all: ["education"] },
+  { key: "highest_education", all: ["degree"] },
   // Open-ended motivation questions ("why do you want this role / job / position").
   { key: "motivation", all: ["why", "role"] },
   { key: "motivation", all: ["why", "job"] },

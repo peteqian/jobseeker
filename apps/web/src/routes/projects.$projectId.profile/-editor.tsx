@@ -9,6 +9,7 @@ import { projectsKeys } from "@/lib/query-keys";
 import type { ProfileSkill, ProjectSnapshot, StructuredProfile } from "@jobseeker/contracts";
 
 import { CompanyPreferencesSection } from "./-components/company-preferences-section";
+import { EducationSection } from "./-components/education-section";
 import { JsonEditor } from "./-components/json-editor";
 import { InsightsTier } from "./-components/insights-tier";
 import { PreferredLocationsSection } from "./-components/preferred-locations-section";
@@ -167,6 +168,7 @@ export const ProfileEditor = forwardRef<ProfileEditorHandle, ProfileEditorProps>
                   addSkill={addSkill}
                 />
                 <WorkHistorySection form={form} />
+                <EducationSection form={form} />
                 <ProjectsSection form={form} />
               </TabsContent>
 

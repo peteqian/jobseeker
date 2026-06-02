@@ -23,6 +23,31 @@ export function projectsDir() {
   return path.join(dataDir, "projects");
 }
 
+// ---------------------------------------------------------------------------
+// AI skill files
+// ---------------------------------------------------------------------------
+
+/**
+ * Canonical home for the markdown "skill" files (resume-craft, cover-letter,
+ * recruiter-review) the tailoring AI loads as system prompts. Lives in the app
+ * data dir so every LLM provider reads one shared source. Override with
+ * `SKILLS_DIR` (e.g. to point at the agent's own home). Provider homes can
+ * symlink to this so codex/claude/etc all see the same files.
+ */
+export function skillsDir() {
+  return process.env.SKILLS_DIR?.trim() || path.join(dataDir, "skills");
+}
+
+export function ensureSkillsDir() {
+  const dir = skillsDir();
+  mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+export function skillPath(skillName: string) {
+  return path.join(skillsDir(), `${skillName}.md`);
+}
+
 export function projectDir(projectSlug: string) {
   return path.join(projectsDir(), projectSlug);
 }

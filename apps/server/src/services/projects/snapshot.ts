@@ -10,6 +10,9 @@ import type {
   ProjectStatus,
   QuestionCard,
   QuestionFieldValue,
+  TailoringIssue,
+  TailoringReview,
+  TailoringReviewHistoryEntry,
   TaskRecord,
   TopicFileMeta,
 } from "@jobseeker/contracts";
@@ -28,6 +31,8 @@ import {
   questionCards,
   questions,
   projects,
+  tailoringReviewHistory,
+  tailoringReviews,
   tasks,
   topicFiles,
 } from "../../db/schema";
@@ -62,6 +67,8 @@ export async function buildProjectSnapshot(
     questionHistoryList,
     jobsList,
     matches,
+    tailoringReviewRows,
+    tailoringReviewHistoryRows,
     profile,
     topicFileRows,
     chatThreadRows,
@@ -111,6 +118,13 @@ export async function buildProjectSnapshot(
       .all(),
     db.select().from(jobs).where(eq(jobs.projectId, projectId)).orderBy(asc(jobs.createdAt)).all(),
     db.select().from(jobMatches).where(eq(jobMatches.projectId, projectId)).all(),
+    db.select().from(tailoringReviews).where(eq(tailoringReviews.projectId, projectId)).all(),
+    db
+      .select()
+      .from(tailoringReviewHistory)
+      .where(eq(tailoringReviewHistory.projectId, projectId))
+      .orderBy(desc(tailoringReviewHistory.createdAt))
+      .all(),
     db.select().from(profiles).where(eq(profiles.projectId, projectId)).get(),
     db
       .select()
@@ -248,10 +262,29 @@ export async function buildProjectSnapshot(
     jobMatches: matches.map((match) => ({
       jobId: match.jobId,
       projectId: match.projectId,
+      level: match.level as JobMatch["level"],
       score: match.score,
       reasons: JSON.parse(match.reasonsJson) as string[],
       gaps: JSON.parse(match.gapsJson) as string[],
     })) as JobMatch[],
+    tailoringReviews: tailoringReviewRows.map((row) => ({
+      projectId: row.projectId,
+      jobId: row.jobId,
+      kind: row.kind,
+      documentId: row.documentId,
+      score: row.score,
+      issues: JSON.parse(row.issuesJson) as TailoringIssue[],
+      createdAt: row.createdAt,
+    })) as TailoringReview[],
+    tailoringReviewHistory: tailoringReviewHistoryRows.map((row) => ({
+      id: row.id,
+      jobId: row.jobId,
+      kind: row.kind,
+      documentId: row.documentId,
+      score: row.score,
+      issues: JSON.parse(row.issuesJson) as TailoringIssue[],
+      createdAt: row.createdAt,
+    })) as TailoringReviewHistoryEntry[],
     topicFiles: topicFileRows.map((row) => ({
       id: row.id,
       projectId: row.projectId,

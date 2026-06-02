@@ -111,6 +111,9 @@ export const jobs = sqliteTable(
     url: text("url").notNull(),
     summary: text("summary").notNull(),
     salary: text("salary"),
+    // Full job-description text fetched during the match pass. Cached so the
+    // apply fit judge can reuse it without a second page fetch.
+    descriptionText: text("description_text"),
     createdAt: text("created_at").notNull(),
   },
   (table) => [
@@ -147,11 +150,49 @@ export const jobMatches = sqliteTable(
     projectId: text("project_id")
       .notNull()
       .references(() => projects.id, { onDelete: "cascade" }),
+    level: text("level").notNull().default("pending"),
     score: real("score").notNull(),
     reasonsJson: text("reasons_json").notNull(),
     gapsJson: text("gaps_json").notNull(),
   },
   (table) => [primaryKey({ columns: [table.jobId, table.projectId] })],
+);
+
+export const tailoringReviews = sqliteTable(
+  "tailoring_reviews",
+  {
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    jobId: text("job_id")
+      .notNull()
+      .references(() => jobs.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    documentId: text("document_id").notNull(),
+    score: real("score").notNull(),
+    issuesJson: text("issues_json").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.projectId, table.jobId, table.kind] })],
+);
+
+export const tailoringReviewHistory = sqliteTable(
+  "tailoring_review_history",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    jobId: text("job_id")
+      .notNull()
+      .references(() => jobs.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    documentId: text("document_id").notNull(),
+    score: real("score").notNull(),
+    issuesJson: text("issues_json").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [index("idx_tailoring_review_history_job_kind").on(table.jobId, table.kind)],
 );
 
 export const profiles = sqliteTable("profiles", {

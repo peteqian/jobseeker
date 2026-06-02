@@ -47,6 +47,15 @@ function JobEditorPage() {
     [project?.documents, jobId, documentKind],
   );
 
+  const tailoringKind = kind === "resume" ? "resume_tailoring" : "cover_letter_tailoring";
+  const review = useMemo(
+    () =>
+      project?.tailoringReviews.find(
+        (entry) => entry.jobId === jobId && entry.kind === tailoringKind,
+      ) ?? null,
+    [project?.tailoringReviews, jobId, tailoringKind],
+  );
+
   const [content, setContent] = useState(doc?.content ?? "");
   const [baselineContent, setBaselineContent] = useState(doc?.content ?? "");
 
@@ -97,6 +106,19 @@ function JobEditorPage() {
       jobId,
     });
   };
+
+  const handleRerunReview = () => {
+    if (!projectId || !doc) return;
+    startTask.mutate({ projectId, type: "tailoring_review", jobId, input: tailoringKind });
+  };
+
+  const history = useMemo(
+    () =>
+      (project?.tailoringReviewHistory ?? [])
+        .filter((entry) => entry.jobId === jobId && entry.kind === tailoringKind)
+        .slice(0, 6),
+    [project?.tailoringReviewHistory, jobId, tailoringKind],
+  );
 
   const handleDownload = async () => {
     if (!content) return;
@@ -185,6 +207,15 @@ function JobEditorPage() {
           </Button>
           <Button
             size="sm"
+            variant="outline"
+            onClick={handleRerunReview}
+            disabled={!doc || isGenerating || startTask.isPending}
+            title="Re-run the recruiter review on the saved document"
+          >
+            Re-run review
+          </Button>
+          <Button
+            size="sm"
             variant={dirty ? "default" : "ghost"}
             onClick={handleSave}
             disabled={!doc || !dirty || updateDocument.isPending}
@@ -202,6 +233,47 @@ function JobEditorPage() {
           </Button>
         </div>
       </header>
+
+      {review && !isGenerating ? (
+        <div className="rounded-lg border bg-muted/30 p-4">
+          <div className="mb-2 flex items-center gap-2">
+            <span className="text-sm font-semibold">Recruiter review</span>
+            <Badge
+              variant={review.score >= 85 ? "default" : "outline"}
+              className={
+                review.score >= 85 ? "" : review.score >= 70 ? "text-amber-600" : "text-destructive"
+              }
+            >
+              {review.score}/100
+            </Badge>
+          </div>
+          {review.issues.length > 0 ? (
+            <ul className="space-y-1 text-sm text-muted-foreground">
+              {review.issues.map((issue) => (
+                <li key={`${issue.severity}-${issue.issue}`}>
+                  <span className="font-medium text-foreground/80">[{issue.severity}]</span>{" "}
+                  {issue.issue}
+                  {issue.fix ? <span className="text-foreground/60"> — {issue.fix}</span> : null}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-sm text-muted-foreground">No issues flagged — looks strong.</p>
+          )}
+          {history.length > 1 ? (
+            <div className="mt-3 border-t pt-2">
+              <p className="mb-1 text-xs font-medium text-muted-foreground">Score history</p>
+              <ul className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                {history.map((entry) => (
+                  <li key={entry.id}>
+                    {entry.score}/100 · {new Date(entry.createdAt).toLocaleString()}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       {!doc && !isGenerating ? (
         <div className="flex flex-1 items-center justify-center rounded-lg border border-dashed bg-muted/30 p-12 text-center">

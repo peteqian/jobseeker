@@ -65,6 +65,24 @@ describe("deriveAnswersFromProfile (pure)", () => {
     expect(deriveAnswersFromProfile(sparse)).toEqual([]);
   });
 
+  it("derives the most recent qualification as highest_education", () => {
+    const withEducation = makeProfile({
+      education: [
+        { id: "1", institution: "TAFE", degree: "Diploma of IT", endDate: "2016" },
+        {
+          id: "2",
+          institution: "UNSW",
+          degree: "Bachelor of Science",
+          field: "Computer Science",
+          endDate: "2020",
+        },
+      ],
+    });
+    const byKey = new Map(deriveAnswersFromProfile(withEducation).map((d) => [d.key, d.answer]));
+
+    expect(byKey.get("highest_education")).toBe("Bachelor of Science in Computer Science, UNSW");
+  });
+
   it("includes visa detail only when present", () => {
     const withVisa = makeProfile({
       workRights: {

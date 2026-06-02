@@ -142,14 +142,12 @@ export function toExplorerFeed(
       const job = (payload.job ?? {}) as Record<string, unknown>;
       const title = typeof job.title === "string" ? job.title : "Untitled";
       const company = typeof job.company === "string" ? job.company : "Unknown company";
-      const score = typeof payload.score === "number" ? payload.score : null;
-      const scoreText = score !== null ? ` · score ${Math.round(score * 100)}` : "";
       push({
         ...base,
         kind: "outcome",
         tone: "success",
         label: `Saved ${title}`,
-        detail: `${company} · ${domain}${scoreText}`,
+        detail: `${company} · ${domain}`,
       });
       continue;
     }

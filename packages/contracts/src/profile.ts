@@ -161,6 +161,40 @@ export interface ProfileSkill {
   evidence?: string[];
 }
 
+/**
+ * A formal qualification — degree, diploma, certification. Distinct from work
+ * and projects; recruiters and screening questions often ask for it, and it is
+ * a real fit signal the match judge should weigh.
+ */
+export interface ProfileEducation {
+  id: string;
+  institution: string;
+  /** e.g. "Bachelor of Science", "Diploma of IT". */
+  degree: string;
+  /** Field of study / major, e.g. "Computer Science". */
+  field?: string;
+  /** Start month/year, ISO "YYYY-MM" or "YYYY". */
+  startDate?: string;
+  /** End / graduation month/year. Omitted while studying. */
+  endDate?: string;
+  isCurrent?: boolean;
+}
+
+/** Coerces a stored education entry into the current shape. */
+export function normalizeEducation(raw: unknown): ProfileEducation {
+  const e = (raw ?? {}) as Partial<ProfileEducation>;
+  const isCurrent = Boolean(e.isCurrent);
+  return {
+    id: e.id ?? "",
+    institution: e.institution ?? "",
+    degree: e.degree ?? "",
+    field: e.field,
+    startDate: e.startDate,
+    endDate: isCurrent ? undefined : e.endDate,
+    isCurrent,
+  };
+}
+
 export interface ProfileTargetRole {
   title: string;
   level: "entry" | "mid" | "senior" | "lead" | "principal";
@@ -315,6 +349,8 @@ export interface StructuredProfile {
   experiences: ProfileExperience[];
   /** Side / learning projects that expand the skillset, distinct from work. */
   projects?: ProfileProject[];
+  /** Formal qualifications — degrees, diplomas, certifications. */
+  education?: ProfileEducation[];
   skills: ProfileSkill[];
   targeting: {
     roles: ProfileTargetRole[];

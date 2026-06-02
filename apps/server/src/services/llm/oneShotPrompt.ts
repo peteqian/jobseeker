@@ -45,18 +45,30 @@ export interface OneShotPromptOptions {
  * tailoring.
  */
 export async function runOneShotPrompt(opts: OneShotPromptOptions): Promise<string | null> {
-  // Prefer the same configured provider the chat uses (codex / claude / opencode
-  // adapters, picked by availability + settings). This is what makes analyses
-  // work whenever chat works, instead of depending on a separate codex binary
-  // or ANTHROPIC_API_KEY.
-  const viaProvider = await callProviderAdapter(opts);
-  if (viaProvider !== null) return viaProvider;
-
-  // Legacy direct fallbacks, kept for environments where the adapter registry
-  // has no available provider but a raw codex binary / Anthropic key exists.
   const wantsCodex = !opts.modelSelection?.provider || opts.modelSelection.provider === "codex";
   const wantsClaude = !opts.modelSelection?.provider || opts.modelSelection.provider === "claude";
 
+  // Stateless, non-streaming codex calls go straight to `codex exec`. The
+  // provider adapter drives the codex app-server (a stateful, agentic thread)
+  // — the right transport for chat and live streaming, but for a one-shot it
+  // adds cold-start/agent-loop overhead and can hang outright in headless /
+  // detached / cron contexts where the app-server doesn't complete a turn. The
+  // helper discards the session id anyway, so there's nothing stateful to keep.
+  // Callers that stream (onEvent) still go adapter-first below, since exec has
+  // no event stream.
+  if (!opts.onEvent && wantsCodex && isCodexAvailable()) {
+    const direct = await callCodex(opts);
+    if (direct !== null) return direct;
+  }
+
+  // Otherwise prefer the same configured provider the chat uses (codex / claude
+  // / opencode adapters, picked by availability + settings) so analyses work
+  // whenever chat works, and so streaming callers get their event deltas.
+  const viaProvider = await callProviderAdapter(opts);
+  if (viaProvider !== null) return viaProvider;
+
+  // Direct fallbacks for when the adapter has no available provider (or the
+  // streaming adapter call failed) but a raw codex binary / Anthropic key exists.
   if (wantsCodex && isCodexAvailable()) {
     const result = await callCodex(opts);
     if (result !== null) return result;

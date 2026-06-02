@@ -31,6 +31,17 @@ Schema:
       "url": "repo/demo link or null"
     }
   ],
+  "education": [
+    {
+      "id": "uuid",
+      "institution": "university or school name",
+      "degree": "degree type, e.g. 'Bachelor of Science'",
+      "field": "field of study, e.g. 'Computer Science', or null",
+      "startDate": "start month as YYYY-MM or year YYYY, or null",
+      "endDate": "graduation month as YYYY-MM or year YYYY, or null if still studying",
+      "isCurrent": true/false
+    }
+  ],
   "skills": [
     {
       "name": "skill name",
@@ -96,6 +107,7 @@ Rules:
 - Extract ALL skills mentioned, categorized properly.
 - For experiences, extract concrete achievements. Prefer metrics.
 - Put personal, side, or open-source projects in "projects", NOT "experiences". These show skills beyond paid work; capture the skills each demonstrates. Leave empty if none are mentioned.
+- For "education", extract each degree/diploma/certification with its institution, field of study, and study period (graduation year is enough). Leave empty if none are stated.
 - Infer location preferences from where they have worked.
 - Generate effective search keywords — terms a recruiter would use to find this person.
 - Discover implicit preferences (e.g. if they only worked at startups, that is a preference).

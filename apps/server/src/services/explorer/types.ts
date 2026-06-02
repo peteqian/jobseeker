@@ -27,9 +27,6 @@ export interface ExplorerProgress {
   retry?: boolean;
   raw?: string;
   job?: FoundJob;
-  score?: number;
-  reasons?: string[];
-  gaps?: string[];
   /** Codex SDK event kind when phase === "codex_event" (e.g. reasoning, web_search). */
   eventKind?: string;
   /** Compact text payload for codex_event (reasoning summary, command, query, etc.). */

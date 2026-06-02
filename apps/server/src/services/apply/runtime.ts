@@ -9,6 +9,7 @@ import type { ChatModelSelection, StructuredProfile } from "@jobseeker/contracts
 
 import { acquireBrowserSession, realChromeExecutable } from "../../lib/browserSession";
 import { logInfo, logWarn } from "../../lib/log";
+import { extractBodyText } from "../../lib/pageText";
 import { browserProfileDir, ensureScopeDir } from "../../lib/paths";
 import { buildApplyActions } from "./actions";
 import { answersMap, upsertAnswer } from "./answers";
@@ -65,7 +66,7 @@ export async function runApply(input: RunApplyInput): Promise<ApplyResult> {
     await page.waitForStablePage(3_000).catch(() => {});
     if (input.signal.aborted) return { status: "failed", reason: "aborted" };
 
-    const roleText = await page.evaluate<string>("document.body.innerText").catch(() => "");
+    const roleText = await extractBodyText(page);
     const fit = await assessFit({
       roleText,
       profile: input.profile,
