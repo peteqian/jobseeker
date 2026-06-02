@@ -31,18 +31,23 @@ export function registerExplorerRoutes(app: Hono) {
     const input = (await c.req.json()) as UpdateExplorerConfigInput;
     const timestamp = now();
 
+    const domainsJson = JSON.stringify(input.domains);
+    const searchJson = JSON.stringify(input.search);
+
     await db
       .insert(explorerConfigs)
       .values({
         projectId,
-        domainsJson: JSON.stringify(input.domains),
+        domainsJson,
+        searchJson,
         includeAgentSuggestions: input.includeAgentSuggestions,
         updatedAt: timestamp,
       })
       .onConflictDoUpdate({
         target: explorerConfigs.projectId,
         set: {
-          domainsJson: JSON.stringify(input.domains),
+          domainsJson,
+          searchJson,
           includeAgentSuggestions: input.includeAgentSuggestions,
           updatedAt: timestamp,
         },
@@ -53,6 +58,7 @@ export function registerExplorerRoutes(app: Hono) {
       explorer: {
         projectId,
         domains: input.domains,
+        search: input.search,
         includeAgentSuggestions: input.includeAgentSuggestions,
         updatedAt: timestamp,
       },

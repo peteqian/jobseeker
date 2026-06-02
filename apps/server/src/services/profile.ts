@@ -52,6 +52,12 @@ function finalizeProfile(
 ): StructuredProfile {
   profile.version = existingProfile ? existingProfile.version + 1 : 1;
   profile.updatedAt = new Date().toISOString();
+  // Interview-derived point expansions are user-authored ground truth. The
+  // extraction LLM never sees or regenerates them, so carry them through any
+  // rebuild verbatim — a resume re-upload must not drop them.
+  if (existingProfile?.pointDetails?.length) {
+    profile.pointDetails = existingProfile.pointDetails;
+  }
   return profile;
 }
 
@@ -83,6 +89,7 @@ function emptyProfile(): StructuredProfile {
     updatedAt: timestamp,
     identity: { summary: "" },
     experiences: [],
+    projects: [],
     skills: [],
     targeting: {
       roles: [],
@@ -91,6 +98,6 @@ function emptyProfile(): StructuredProfile {
     },
     searchContext: { effectiveKeywords: [], ineffectiveKeywords: [], discoveredPatterns: [] },
     memory: { clarifications: [], discoveredPreferences: [] },
-    workRights: { citizenship: [], australiaWorkRights: "unspecified" },
+    workRights: { citizenship: [], rights: [] },
   };
 }

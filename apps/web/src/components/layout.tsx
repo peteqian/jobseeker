@@ -5,7 +5,6 @@ import {
   Compass,
   Files,
   LayoutGrid,
-  MessageSquare,
   Plus,
   Settings,
   Sparkles,
@@ -63,8 +62,7 @@ const primaryNavigation = [
 
 const projectSteps = [
   { segment: "", label: "Overview", icon: LayoutGrid },
-  { segment: "/resume", label: "Your resume", icon: Upload },
-  { segment: "/coach", label: "Coach", icon: MessageSquare },
+  { segment: "/coach", label: "Resume Studio", icon: Upload },
   { segment: "/profile", label: "Profile", icon: Sparkles },
   { segment: "/explorer", label: "Explorer", icon: Compass },
 ] as const;

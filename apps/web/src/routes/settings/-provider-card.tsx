@@ -1,7 +1,9 @@
-import { Loader2 } from "lucide-react";
+import { type ReactNode } from "react";
+import { FolderOpen, KeyRound, Link, Loader2, Tags, Terminal } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { CommaSeparatedInput } from "@/components/form/comma-separated-input";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { Switch } from "@/components/ui/switch";
 import type { ProviderCardProps, ProviderSummary } from "./-settings.types";
 
@@ -40,6 +42,40 @@ function getProviderSummary(input: {
   };
 }
 
+// Icon-led path/URL field: the help line below doubles as the label, so the
+// input itself stays label-less with an example value as its placeholder.
+function PathField({
+  icon,
+  value,
+  onChange,
+  placeholder,
+  help,
+  type = "text",
+}: {
+  icon: ReactNode;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  help: string;
+  type?: string;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <InputGroup>
+        <InputGroupAddon>{icon}</InputGroupAddon>
+        <InputGroupInput
+          aria-label={help}
+          type={type}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder={placeholder}
+        />
+      </InputGroup>
+      <p className="text-xs text-muted-foreground">{help}</p>
+    </div>
+  );
+}
+
 export function ProviderCard({
   providerId,
   providerSettings,
@@ -53,6 +89,7 @@ export function ProviderCard({
   const settings = providerSettings?.[providerId];
   const enabled = settings?.enabled ?? true;
   const summary = getProviderSummary({ enabled, connection });
+  const extra = settings as unknown as Record<string, string>;
 
   const title = providerId === "codex" ? "Codex" : providerId === "claude" ? "Claude" : "OpenCode";
 
@@ -74,68 +111,61 @@ export function ProviderCard({
       <div className="space-y-4 px-4 py-4 sm:px-5">
         {providerId === "codex" && (
           <>
-            <div className="space-y-2">
-              <h4 className="text-sm font-semibold">Codex binary path</h4>
-              <Input
-                value={settings?.binaryPath ?? ""}
-                onChange={(event) => onUpdateSettings({ binaryPath: event.target.value })}
-                placeholder="codex"
-              />
-              <p className="text-xs text-muted-foreground">Path to the Codex binary</p>
-            </div>
-            <div className="space-y-2">
-              <h4 className="text-sm font-semibold">Codex home path</h4>
-              <Input
-                value={settings?.homePath ?? ""}
-                onChange={(event) => onUpdateSettings({ homePath: event.target.value })}
-                placeholder="CODEX_HOME (optional)"
-              />
-              <p className="text-xs text-muted-foreground">
-                Optional custom Codex home and config directory.
-              </p>
-            </div>
+            <PathField
+              icon={<Terminal />}
+              value={settings?.binaryPath ?? ""}
+              onChange={(value) => onUpdateSettings({ binaryPath: value })}
+              placeholder="codex"
+              help="Path to the Codex binary"
+            />
+            <PathField
+              icon={<FolderOpen />}
+              value={extra?.homePath ?? ""}
+              onChange={(value) => onUpdateSettings({ homePath: value })}
+              placeholder="CODEX_HOME (optional)"
+              help="Optional custom Codex home and config directory."
+            />
           </>
         )}
 
         {providerId === "opencode" && (
           <>
-            <div className="space-y-2">
-              <h4 className="text-sm font-semibold">OpenCode binary path</h4>
-              <Input
-                value={settings?.binaryPath ?? ""}
-                onChange={(event) => onUpdateSettings({ binaryPath: event.target.value })}
-                placeholder="opencode"
-              />
-              <p className="text-xs text-muted-foreground">Path to the OpenCode binary</p>
-            </div>
-            <div className="space-y-2">
-              <h4 className="text-sm font-semibold">OpenCode server URL</h4>
-              <Input
-                value={(settings as Record<string, string>)?.serverUrl ?? ""}
-                onChange={(event) => onUpdateSettings({ serverUrl: event.target.value })}
-                placeholder="http://127.0.0.1:4096"
-              />
-              <p className="text-xs text-muted-foreground">
-                Leave blank to let OpenCode spawn locally when needed.
-              </p>
-            </div>
-            <div className="space-y-2">
-              <h4 className="text-sm font-semibold">OpenCode server password</h4>
-              <Input
-                value={(settings as Record<string, string>)?.serverPassword ?? ""}
-                onChange={(event) => onUpdateSettings({ serverPassword: event.target.value })}
-                placeholder="Server password (optional)"
-              />
-              <p className="text-xs text-muted-foreground">Stored in plain text on disk.</p>
-            </div>
-            <div className="space-y-2">
-              <h4 className="text-sm font-semibold">OpenCode custom models</h4>
-              <Input
-                value={joinCsv((settings as Record<string, string[]>)?.customModels ?? [])}
-                onChange={(event) =>
-                  onUpdateSettings({ customModels: parseCsv(event.target.value) })
-                }
+            <PathField
+              icon={<Terminal />}
+              value={settings?.binaryPath ?? ""}
+              onChange={(value) => onUpdateSettings({ binaryPath: value })}
+              placeholder="opencode"
+              help="Path to the OpenCode binary"
+            />
+            <PathField
+              icon={<FolderOpen />}
+              value={extra?.configPath ?? ""}
+              onChange={(value) => onUpdateSettings({ configPath: value })}
+              placeholder="~/.config/opencode"
+              help="Where OpenCode reads your config (sets XDG_CONFIG_HOME)."
+            />
+            <PathField
+              icon={<Link />}
+              value={extra?.serverUrl ?? ""}
+              onChange={(value) => onUpdateSettings({ serverUrl: value })}
+              placeholder="http://127.0.0.1:4096"
+              help="Leave blank to let OpenCode spawn locally when needed."
+            />
+            <PathField
+              icon={<KeyRound />}
+              value={extra?.serverPassword ?? ""}
+              onChange={(value) => onUpdateSettings({ serverPassword: value })}
+              placeholder="Server password (optional)"
+              help="Stored in plain text on disk."
+            />
+            <div className="space-y-1.5">
+              <CommaSeparatedInput
+                id="opencode-custom-models"
+                name="customModels"
+                value={(settings as unknown as Record<string, string[]>)?.customModels ?? []}
+                onChange={(value) => onUpdateSettings({ customModels: value })}
                 placeholder="openai/gpt-5, anthropic/claude-sonnet-4-5"
+                icon={<Tags />}
               />
               <p className="text-xs text-muted-foreground">
                 Comma-separated `provider/model` slugs.
@@ -145,15 +175,22 @@ export function ProviderCard({
         )}
 
         {providerId === "claude" && (
-          <div className="space-y-2">
-            <h4 className="text-sm font-semibold">Claude binary path</h4>
-            <Input
+          <>
+            <PathField
+              icon={<Terminal />}
               value={settings?.binaryPath ?? ""}
-              onChange={(event) => onUpdateSettings({ binaryPath: event.target.value })}
+              onChange={(value) => onUpdateSettings({ binaryPath: value })}
               placeholder="claude"
+              help="Path to the Claude binary"
             />
-            <p className="text-xs text-muted-foreground">Path to the Claude binary</p>
-          </div>
+            <PathField
+              icon={<FolderOpen />}
+              value={extra?.configPath ?? ""}
+              onChange={(value) => onUpdateSettings({ configPath: value })}
+              placeholder="~/.claude"
+              help="Where Claude reads your login/config (CLAUDE_CONFIG_DIR)."
+            />
+          </>
         )}
 
         <div className="flex justify-end">
@@ -165,15 +202,4 @@ export function ProviderCard({
       </div>
     </div>
   );
-}
-
-function parseCsv(value: string): string[] {
-  return value
-    .split(",")
-    .map((entry) => entry.trim())
-    .filter(Boolean);
-}
-
-function joinCsv(value: string[]): string {
-  return value.join(", ");
 }

@@ -15,5 +15,4 @@ export function createCodexSession(config: CodexSessionConfig): CodexSession {
   return activeBackend.createSession(config);
 }
 
-export { ensureCodexAuthInHome } from "./auth";
 export * from "./types";

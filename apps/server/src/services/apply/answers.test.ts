@@ -29,7 +29,7 @@ function makeProfile(overrides: Partial<StructuredProfile> = {}): StructuredProf
     },
     searchContext: { effectiveKeywords: [], ineffectiveKeywords: [], discoveredPatterns: [] },
     memory: { clarifications: [], discoveredPreferences: [] },
-    workRights: { citizenship: ["AU"], australiaWorkRights: "citizen" },
+    workRights: { citizenship: ["AU"], rights: [{ country: "AU", status: "citizen" }] },
     ...overrides,
   };
 }
@@ -59,7 +59,7 @@ describe("deriveAnswersFromProfile (pure)", () => {
         locations: [],
         companyPreference: { industries: [], avoidIndustries: [] },
       },
-      workRights: { citizenship: [], australiaWorkRights: "unspecified" },
+      workRights: { citizenship: [], rights: [] },
     });
 
     expect(deriveAnswersFromProfile(sparse)).toEqual([]);
@@ -69,8 +69,7 @@ describe("deriveAnswersFromProfile (pure)", () => {
     const withVisa = makeProfile({
       workRights: {
         citizenship: ["GB"],
-        australiaWorkRights: "work_visa",
-        visaDetail: "Subclass 482",
+        rights: [{ country: "AU", status: "work_visa", visaDetail: "Subclass 482" }],
       },
     });
     const byKey = new Map(deriveAnswersFromProfile(withVisa).map((d) => [d.key, d.answer]));

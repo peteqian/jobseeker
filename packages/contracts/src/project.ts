@@ -10,19 +10,42 @@ import type {
   ProjectStatus,
 } from "./core";
 import type { StructuredProfile } from "./profile";
+import type { RemotePreference } from "./explorer-projections";
 import type { QuestionAnswerRecord, QuestionCard, PendingQuestion } from "./questions";
 
 export interface ExplorerDomainConfig {
   domain: string;
   enabled: boolean;
-  jobLimit: number;
+  /**
+   * Legacy per-domain fields. Search is now a single shared set per run
+   * (`ExplorerSearchConfig`); these are retained as optional only so existing
+   * persisted rows still parse. Do not write them in new code.
+   */
+  queries?: string[];
+  jobLimit?: number;
+  freshness?: ExplorerFreshness;
+}
+
+/**
+ * The one shared search set applied across all enabled domains in a run. Roles
+ * drive the per-domain queries; location/arrangement/freshness/limit are global.
+ */
+export type ExplorerRunMode = "sequential" | "parallel";
+
+export interface ExplorerSearchConfig {
+  roles: string[];
+  locationText?: string;
+  remotePreference?: RemotePreference;
   freshness: ExplorerFreshness;
-  queries: string[];
+  jobLimit: number;
+  /** Run queries one at a time (default) or fan out in parallel. */
+  runMode?: ExplorerRunMode;
 }
 
 export interface ExplorerConfigRecord {
   projectId: string;
   domains: ExplorerDomainConfig[];
+  search: ExplorerSearchConfig;
   includeAgentSuggestions: boolean;
   updatedAt: string;
 }
@@ -137,6 +160,7 @@ export interface ResumePasteInput {
 
 export interface UpdateExplorerConfigInput {
   domains: ExplorerDomainConfig[];
+  search: ExplorerSearchConfig;
   includeAgentSuggestions: boolean;
 }
 

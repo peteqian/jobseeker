@@ -73,6 +73,15 @@ export async function createThread(
   ) as Promise<ChatThread>;
 }
 
+export async function deleteThread(threadId: string): Promise<boolean> {
+  return run(
+    Effect.gen(function* () {
+      const client = yield* RpcClient.make(ChatRpcGroup);
+      return yield* client["chat.deleteThread"]({ threadId });
+    }).pipe(Effect.scoped),
+  ) as Promise<boolean>;
+}
+
 export async function getMessages(threadId: string): Promise<ChatMessage[]> {
   return run(
     Effect.gen(function* () {

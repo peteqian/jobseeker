@@ -28,6 +28,7 @@ export function useProjectEvents(projectId: string | null) {
       "task.started",
       "task.progress",
       "task.waiting_for_user",
+      "task.interrupted",
       "task.completed",
       "task.failed",
       "document.created",
@@ -47,10 +48,17 @@ export function useProjectEvents(projectId: string | null) {
         current.some((entry) => entry.id === event.id) ? current : [event, ...current],
       );
       if (!isNew) return;
-      if (event.type !== "task.progress" && event.type !== "task.waiting_for_user") {
+      const payload = event.payload as { taskType?: string; phase?: string } | undefined;
+      // task.progress is normally a pure UI stream (no refetch), except a
+      // "job_found" phase means a new role was just saved — refetch so results
+      // show up live instead of only after a manual page refresh.
+      const isLiveJobSaved = event.type === "task.progress" && payload?.phase === "job_found";
+      const skipRefetch =
+        event.type === "task.waiting_for_user" ||
+        (event.type === "task.progress" && !isLiveJobSaved);
+      if (!skipRefetch) {
         void queryClient.invalidateQueries({ queryKey: projectsKeys.detail(projectId) });
         void queryClient.invalidateQueries({ queryKey: projectsKeys.list() });
-        const payload = event.payload as { taskType?: string } | undefined;
         if (payload?.taskType === "coach_review") {
           void queryClient.invalidateQueries({ queryKey: coachKeys.review(projectId) });
         }

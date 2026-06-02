@@ -8,7 +8,9 @@ export interface ExplorerProgress {
     | "crawl_step"
     | "codex_raw"
     | "codex_event"
-    | "job_found";
+    | "job_found"
+    | "blocked"
+    | "awaiting_login";
   domain: string;
   query: string;
   currentQuery: number;
@@ -32,9 +34,14 @@ export interface ExplorerProgress {
   eventKind?: string;
   /** Compact text payload for codex_event (reasoning summary, command, query, etc.). */
   eventText?: string;
+  /** Human-facing message for phase === "blocked" (e.g. "sign in to seek.com.au"). */
+  message?: string;
 }
 
 export interface ExplorerRunOptions {
   modelSelection?: ChatModelSelection;
+  signal?: AbortSignal;
   onProgress?: (progress: ExplorerProgress) => void | Promise<void>;
+  /** Task id, used to key the login-pause gate so the UI can resume this run. */
+  taskId?: string;
 }

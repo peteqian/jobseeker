@@ -87,6 +87,7 @@ export interface ChatServiceShape {
   listProviders: () => Effect.Effect<ChatProviderInfo[]>;
   listThreads: (projectId: string, scope: ChatScope) => Effect.Effect<ChatThread[]>;
   createThread: (projectId: string, scope: ChatScope, title?: string) => Effect.Effect<ChatThread>;
+  deleteThread: (threadId: string) => Effect.Effect<boolean>;
   getMessages: (threadId: string) => Effect.Effect<ChatMessage[]>;
   sendMessage: (
     threadId: string,

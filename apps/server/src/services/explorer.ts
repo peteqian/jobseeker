@@ -1,11 +1,6 @@
 import { eq } from "drizzle-orm";
 import type { FoundJob } from "./explorer/jobTypes";
-import {
-  deriveNavigationContext,
-  deriveSearchIntent,
-  type NavigationContext,
-  type SearchIntent,
-} from "@jobseeker/contracts";
+import type { NavigationContext } from "@jobseeker/contracts";
 
 import { db } from "../db";
 import { projects } from "../db/schema";
@@ -14,9 +9,9 @@ import { createProjectSlug } from "../lib/paths";
 import { getProviderSettings } from "../lib/provider-settings";
 import { readExplorerConfig, readExplorerProfile } from "./explorer/config";
 import { deleteOldExplorerJobs, saveDiscoveredJob } from "./explorer/persist";
-import { getEnabledDomains, getQueriesForDomain, type QuerySource } from "./explorer/queryPlanning";
+import { getEnabledDomains, getSearchQueries, type QuerySource } from "./explorer/queryPlanning";
 import { findJobsForQuery, isAbortLikeError } from "./explorer/runtime";
-import type { ExplorerRunOptions } from "./explorer/types";
+import type { ExplorerProgress, ExplorerRunOptions } from "./explorer/types";
 
 export type { ExplorerProgress, ExplorerRunOptions } from "./explorer/types";
 
@@ -66,6 +61,10 @@ export async function runExplorerDiscovery(
   domainsProcessed: number;
   queriesRun: number;
 }> {
+  if (options?.signal?.aborted) {
+    return { jobsCreated: 0, domainsProcessed: 0, queriesRun: 0 };
+  }
+
   const [config, profile] = await Promise.all([
     readExplorerConfig(projectId),
     readExplorerProfile(projectId),
@@ -86,7 +85,13 @@ export async function runExplorerDiscovery(
     return { jobsCreated: 0, domainsProcessed: 0, queriesRun: 0 };
   }
 
-  const searchIntent: SearchIntent | null = profile ? deriveSearchIntent(profile) : null;
+  const { search } = config;
+  const queries = getSearchQueries(search);
+  if (queries.length === 0) {
+    logInfo("explorer queries planned", { count: 0, reason: "no_roles" });
+    return { jobsCreated: 0, domainsProcessed: 0, queriesRun: 0 };
+  }
+  const perQueryLimit = Math.max(1, Math.ceil(search.jobLimit / queries.length));
 
   const plannedRuns: Array<{
     domain: (typeof domains)[number];
@@ -96,40 +101,15 @@ export async function runExplorerDiscovery(
     navigation: NavigationContext;
   }> = [];
   for (const domain of domains) {
-    const queries = getQueriesForDomain(domain, profile);
-    if (queries.length === 0) {
-      logInfo("explorer queries planned", {
-        domain: domain.domain,
-        count: 0,
-        sources: {},
-      });
-      continue;
-    }
-
-    const sources: Record<string, number> = {};
+    logInfo("explorer queries planned", { domain: domain.domain, count: queries.length });
     for (const entry of queries) {
-      sources[entry.source] = (sources[entry.source] ?? 0) + 1;
-    }
-    logInfo("explorer queries planned", {
-      domain: domain.domain,
-      count: queries.length,
-      sources,
-    });
-
-    const perQueryLimit = Math.max(1, Math.ceil(domain.jobLimit / queries.length));
-    for (const entry of queries) {
-      const navigation: NavigationContext = searchIntent
-        ? deriveNavigationContext({
-            intent: searchIntent,
-            query: entry.query,
-            freshness: domain.freshness,
-            maxJobs: perQueryLimit,
-          })
-        : {
-            query: entry.query,
-            freshness: domain.freshness,
-            maxJobs: perQueryLimit,
-          };
+      const navigation: NavigationContext = {
+        query: entry.query,
+        locationText: search.locationText,
+        remotePreference: search.remotePreference,
+        freshness: search.freshness,
+        maxJobs: perQueryLimit,
+      };
       plannedRuns.push({
         domain,
         query: entry.query,
@@ -144,16 +124,32 @@ export async function runExplorerDiscovery(
   const seenUrls = new Set<string>();
   let jobsCreated = 0;
   const totalQueries = plannedRuns.length;
-  const concurrency = Math.max(
-    1,
-    Number.parseInt(process.env.EXPLORER_CONCURRENCY ?? "3", 10) || 3,
+  // Sequential (the default) runs one browser at a time; parallel fans out up
+  // to EXPLORER_CONCURRENCY queries at once. Spawning many browser windows is
+  // heavy, so the user opts into parallel explicitly via search config.
+  const parallelWidth = Math.max(
+    2,
+    Number.parseInt(process.env.EXPLORER_CONCURRENCY ?? "4", 10) || 4,
   );
+  const concurrency = search.runMode === "parallel" ? parallelWidth : 1;
   const timeoutMs = Math.max(
     10_000,
     Number.parseInt(process.env.EXPLORER_PAIR_TIMEOUT_MS ?? "180000", 10) || 180_000,
   );
 
+  // Once a domain reports a login wall, every other query for it would hit the
+  // same wall. Track blocked domains and forward the event so the UI can prompt
+  // the user to sign in once in the persistent browser profile.
+  const blockedDomains = new Set<string>();
+  const handleProgress = async (progress: ExplorerProgress) => {
+    if (progress.phase === "blocked") blockedDomains.add(progress.domain);
+    await options?.onProgress?.(progress);
+  };
+
   const processPair = async (run: (typeof plannedRuns)[number], index: number) => {
+    if (options?.signal?.aborted) return;
+    if (blockedDomains.has(run.domain.domain)) return;
+
     let pairJobsFound = 0;
     await options?.onProgress?.({
       phase: "query_started",
@@ -166,9 +162,17 @@ export async function runExplorerDiscovery(
     });
 
     const controller = new AbortController();
+    const abortPair = () => {
+      controller.abort(options?.signal?.reason ?? new Error("explorer run interrupted"));
+    };
     const timer = setTimeout(() => {
       controller.abort(new Error(`explorer pair timed out after ${timeoutMs}ms`));
     }, timeoutMs);
+    if (options?.signal?.aborted) {
+      abortPair();
+    } else {
+      options?.signal?.addEventListener("abort", abortPair, { once: true });
+    }
 
     const persistFound = async (job: FoundJob) => {
       if (controller.signal.aborted) return;
@@ -193,7 +197,7 @@ export async function runExplorerDiscovery(
       await findJobsForQuery({
         domain: run.domain.domain,
         query: run.query,
-        freshness: run.domain.freshness,
+        freshness: run.navigation.freshness,
         maxJobs: run.maxJobs,
         navigation: run.navigation,
         currentQuery: index + 1,
@@ -201,10 +205,11 @@ export async function runExplorerDiscovery(
         model: agent.model,
         effort: agent.effort,
         projectSlug,
+        taskId: options?.taskId ?? "",
         codexBinaryPath: providerSettings.codex.binaryPath,
         codexAuthHome: providerSettings.codex.homePath,
         signal: controller.signal,
-        onProgress: options?.onProgress,
+        onProgress: handleProgress,
         onFoundJob: persistFound,
       });
     } catch (error) {
@@ -223,8 +228,11 @@ export async function runExplorerDiscovery(
         });
       }
     } finally {
+      options?.signal?.removeEventListener("abort", abortPair);
       clearTimeout(timer);
     }
+
+    if (options?.signal?.aborted) return;
 
     await options?.onProgress?.({
       phase: "query_finished",
@@ -239,9 +247,10 @@ export async function runExplorerDiscovery(
   await runWithConcurrency(
     plannedRuns.map((run, index) => () => processPair(run, index)),
     concurrency,
+    options?.signal,
   );
 
-  if (jobsCreated > 0) {
+  if (!options?.signal?.aborted && jobsCreated > 0) {
     await deleteOldExplorerJobs(projectId, runStartedAt);
   }
 
@@ -258,12 +267,17 @@ export async function runExplorerDiscovery(
  * Explorer only needs bounded fan-out with stable result ordering, so this
  * local helper stays simpler than introducing a generic queue abstraction.
  */
-async function runWithConcurrency<T>(tasks: Array<() => Promise<T>>, limit: number): Promise<T[]> {
+async function runWithConcurrency<T>(
+  tasks: Array<() => Promise<T>>,
+  limit: number,
+  signal?: AbortSignal,
+): Promise<T[]> {
   const results: T[] = new Array(tasks.length);
   let cursor = 0;
   const workers: Array<Promise<void>> = [];
   const worker = async () => {
     while (true) {
+      if (signal?.aborted) return;
       const index = cursor;
       cursor += 1;
       if (index >= tasks.length) return;

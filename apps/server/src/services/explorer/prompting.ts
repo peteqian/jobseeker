@@ -65,6 +65,8 @@ export function buildAgentTask(input: {
 
   lines.push(
     "Keyword search box is only for the role/title query. Location and work arrangement belong in their dedicated inputs or filters.",
+    'If a dismissable promo/sign-in popup covers the page (e.g. SEEK\'s "Sign in to find jobs matched to you"), first try to close it: click its X, click "See more", or click outside it, then keep browsing the public listings.',
+    "If a sign-in/login wall blocks the listings and you cannot view jobs without an account, call report_blocked with a short reason. This PAUSES the run and asks the user to sign in in the open browser window; do NOT create an account or sign in yourself. When report_blocked returns, the user has signed in - keep browsing the now-visible listings and report jobs. Do NOT finish because of the wall.",
     "Return only currently visible, real job listings from this site.",
     "Call the report_job action for each listing as soon as its title, company, and URL are visible.",
     "When the results layout is stable, call save_trajectory once so future runs can replay it without the agent.",

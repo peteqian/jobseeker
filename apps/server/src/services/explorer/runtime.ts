@@ -10,16 +10,18 @@ import type { DistilledTrajectory, FoundJob } from "./jobTypes";
 import type { ExplorerFreshness, NavigationContext } from "@jobseeker/contracts";
 
 import { dataDir } from "../../env";
+import { acquireBrowserSession } from "../../lib/browserSession";
 import { logInfo, logWarn } from "../../lib/log";
-import { ensureCodexHomeDir, ensureScopeDir } from "../../lib/paths";
+import { ensureScopeDir } from "../../lib/paths";
 import { buildExplorerActions } from "./actions";
 import {
-  buildQueryProfileKey,
   getLaunchOptions,
   getRetryLaunchOptions,
   isBotInterstitial,
+  isModelDecisionFailure,
 } from "./browserLaunch";
 import { computeFingerprint, extractUrlPattern } from "./fingerprint";
+import { waitForLogin } from "./loginGate";
 import {
   findReusablePageMemory,
   recordPageMemoryFailure,
@@ -49,6 +51,7 @@ export async function findJobsForQuery(input: {
   model: string;
   effort: string;
   projectSlug: string;
+  taskId: string;
   codexBinaryPath: string;
   codexAuthHome: string;
   signal: AbortSignal;
@@ -73,7 +76,11 @@ export async function findJobsForQuery(input: {
 
   const runOnce = async (launchOptions: ReturnType<typeof getLaunchOptions>, retry: boolean) => {
     const codexCwd = ensureScopeDir(input.projectSlug, "explorer");
-    const codexHome = ensureCodexHomeDir(input.projectSlug, "explorer", `explorer_${input.domain}`);
+    // Run against the user's real Codex home (defaults to ~/.codex via provider
+    // settings) so it reuses their existing `codex login` and refreshes the
+    // token in place. A per-run home copied auth.json once and never refreshed,
+    // staling its single-use refresh token ("refresh_token_reused").
+    const codexHome = input.codexAuthHome?.trim() ? input.codexAuthHome : undefined;
 
     logInfo("explorer query started", {
       domain: input.domain,
@@ -92,7 +99,10 @@ export async function findJobsForQuery(input: {
       timezone: launchOptions.timezoneId,
     });
 
-    const session = await BrowserSession.launch(launchOptions);
+    const { session, owned } = await acquireBrowserSession(launchOptions);
+    // A login wall pauses the agent loop mid-step (the window stays open for the
+    // user to sign in); on completion we close as usual and the persistent
+    // profile keeps the session for the next query.
 
     try {
       const page = await session.newPage();
@@ -148,17 +158,15 @@ export async function findJobsForQuery(input: {
         });
       }
 
-      // Use the codex CLI adapter directly rather than `createDecide`: only the
-      // CLI adapter threads `codexHome`/`cwd`, which give each (domain,query) run
-      // its own isolated codex auth home and working dir (it copies auth from
-      // `codexAuthHome` on first use).
+      // The CLI adapter threads `cwd` (read-only sandbox) and, when set, a
+      // CODEX_HOME. We leave CODEX_HOME unset so codex uses the live ~/.codex
+      // auth and refreshes its token in place.
       const decide = createCodexCliDecide({
         binaryPath: input.codexBinaryPath,
         model: input.model,
         effort: input.effort,
         cwd: codexCwd,
         codexHome,
-        codexAuthHome: input.codexAuthHome,
         onRaw: (raw, step) => {
           void input.onProgress?.({
             phase: "codex_raw",
@@ -195,6 +203,17 @@ export async function findJobsForQuery(input: {
       const actions = buildExplorerActions({
         signal: input.signal,
         onFoundJob: input.onFoundJob,
+        onLoginRequired: (reason) => {
+          return input.onProgress?.({
+            phase: "awaiting_login",
+            domain: input.domain,
+            query: input.query,
+            currentQuery: input.currentQuery,
+            totalQueries: input.totalQueries,
+            message: `Sign in to ${input.domain} in the opened browser window, then click Continue. (${reason})`,
+          });
+        },
+        waitForLogin: () => waitForLogin(input.taskId, input.signal),
         saveTrajectory: async (trajectory: DistilledTrajectory) => {
           if (input.signal.aborted) return { saved: false, reason: "aborted" };
           const validated = await validateTrajectoryOnFreshSession({
@@ -271,14 +290,31 @@ export async function findJobsForQuery(input: {
         },
       });
     } finally {
-      await session.close().catch(() => {});
+      // Never close a user-owned (CDP-connected) browser.
+      if (owned) await session.close().catch(() => {});
     }
   };
 
-  const pairSlug = buildQueryProfileKey(input.domain, input.query);
-
   try {
-    let result = await runOnce(getLaunchOptions(pairSlug), false);
+    let result = await runOnce(getLaunchOptions(), false);
+
+    // A model/auth failure (expired Codex token, CLI crash) is not a page
+    // interstitial — relaunching the browser just loops. Surface it and stop.
+    if (!result.success && isModelDecisionFailure(result.summary)) {
+      logWarn("explorer query failed: model/auth error", {
+        domain: input.domain,
+        query: input.query,
+      });
+      await input.onProgress?.({
+        phase: "blocked",
+        domain: input.domain,
+        query: input.query,
+        currentQuery: input.currentQuery,
+        totalQueries: input.totalQueries,
+        message: "Model error — re-authenticate Codex (run `codex login`), then run again.",
+      });
+      return;
+    }
 
     if (
       !result.success &&
@@ -292,7 +328,7 @@ export async function findJobsForQuery(input: {
         query: input.query,
         summary: result.summary,
       });
-      result = await runOnce(getRetryLaunchOptions(pairSlug), true);
+      result = await runOnce(getRetryLaunchOptions(), true);
     }
 
     if (!result.success) {

@@ -50,6 +50,7 @@ export const explorerConfigs = sqliteTable("explorer_configs", {
     .primaryKey()
     .references(() => projects.id, { onDelete: "cascade" }),
   domainsJson: text("domains_json").notNull(),
+  searchJson: text("search_json"),
   includeAgentSuggestions: integer("include_agent_suggestions", {
     mode: "boolean",
   }).notNull(),
@@ -377,6 +378,20 @@ export const coachThreadAnchors = sqliteTable(
   (table) => [
     uniqueIndex("uq_coach_thread_anchors").on(table.anchorType, table.anchorId, table.threadId),
   ],
+);
+
+export const resumeAnalyses = sqliteTable(
+  "resume_analyses",
+  {
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    resumeDocId: text("resume_doc_id").notNull(),
+    kind: text("kind").notNull(),
+    resultJson: text("result_json").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.projectId, table.resumeDocId, table.kind] })],
 );
 
 export const events = sqliteTable("events", {

@@ -2,7 +2,10 @@ import { Context } from "effect";
 
 import type { ChatProvider } from "../types";
 
-export interface ProviderAdapterShape extends Pick<ChatProvider, "models" | "available" | "run"> {
+export interface ProviderAdapterShape extends Pick<
+  ChatProvider,
+  "models" | "available" | "run" | "runEvents"
+> {
   readonly provider: ChatProvider["id"];
 }
 

@@ -3,11 +3,21 @@ import path from "node:path";
 
 import { dataDir } from "../env";
 
-export type ProjectScope = "coach" | "explorer";
+export type ProjectScope = "coach" | "explorer" | "apply";
 
 // ---------------------------------------------------------------------------
 // Project directories
 // ---------------------------------------------------------------------------
+
+/**
+ * Single Chrome profile shared by every browser-driven feature (explorer,
+ * apply). One sign-in to a site persists across all of them. The explorer runs
+ * one browser at a time by default, so concurrent access to this profile is not
+ * a concern; raise `EXPLORER_CONCURRENCY` only for sites that need no login.
+ */
+export function browserProfileDir() {
+  return path.join(dataDir, "browser-profiles", "shared");
+}
 
 export function projectsDir() {
   return path.join(dataDir, "projects");
@@ -33,16 +43,6 @@ export function scopeDir(projectSlug: string, scope: ProjectScope) {
 
 export function ensureScopeDir(projectSlug: string, scope: ProjectScope) {
   const dir = scopeDir(projectSlug, scope);
-  mkdirSync(dir, { recursive: true });
-  return dir;
-}
-
-export function codexHomeDir(projectSlug: string, scope: ProjectScope, threadId: string) {
-  return projectPath(projectSlug, ".codex", scope, threadId);
-}
-
-export function ensureCodexHomeDir(projectSlug: string, scope: ProjectScope, threadId: string) {
-  const dir = codexHomeDir(projectSlug, scope, threadId);
   mkdirSync(dir, { recursive: true });
   return dir;
 }

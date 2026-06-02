@@ -8,7 +8,8 @@ export type TaskType =
   | "cover_letter_tailoring"
   | "coach_review"
   | "ats_analysis"
-  | "hr_analysis";
+  | "hr_analysis"
+  | "apply_job";
 
 export type TaskStatus =
   | "queued"
@@ -32,11 +33,16 @@ export type RuntimeEventType =
   | "task.started"
   | "task.progress"
   | "task.waiting_for_user"
+  | "task.interrupted"
   | "task.completed"
   | "task.failed"
   | "document.created"
   | "jobs.updated"
   | "profile.updated"
+  | "analysis.started"
+  | "analysis.delta"
+  | "analysis.completed"
+  | "analysis.failed"
   | "thread.command.dispatched"
   | "thread.runtime.event"
   | "thread.stream.event";

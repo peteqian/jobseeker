@@ -66,6 +66,7 @@ export interface RunCoachReviewOptions {
   pastedJds?: string[];
   useExplorer?: boolean;
   modelSelection?: ChatModelSelection;
+  onEvent?: (event: import("../../provider/types").ProviderStreamEvent) => void;
 }
 
 /**
@@ -82,12 +83,12 @@ export async function runCoachReview(options: RunCoachReviewOptions): Promise<Co
 
   if (options.deep) {
     const jds = await assembleJds(options.projectId, options.pastedJds, options.useExplorer);
-    const raw = await callDeepModel(resumeText, jds, options.focusArea);
+    const raw = await callDeepModel(resumeText, jds, options.focusArea, options.onEvent);
     if (!raw) return null;
     return persistReview(options.projectId, options.resumeDocId, raw, jds);
   }
 
-  const raw = await callBasicModel(resumeText, options.focusArea);
+  const raw = await callBasicModel(resumeText, options.focusArea, options.onEvent);
   if (!raw) return null;
   return persistReview(options.projectId, options.resumeDocId, raw, []);
 }
@@ -121,11 +122,16 @@ async function assembleJds(
   return out;
 }
 
-async function callBasicModel(resumeText: string, focusArea: string): Promise<RawReview | null> {
+async function callBasicModel(
+  resumeText: string,
+  focusArea: string,
+  onEvent?: RunCoachReviewOptions["onEvent"],
+): Promise<RawReview | null> {
   const text = await runOneShotPrompt({
     label: "coach_review",
     systemPrompt: COACH_REVIEW_SYSTEM_PROMPT,
     prompt: buildCoachReviewUserMessage(resumeText, focusArea),
+    onEvent,
   });
   return text ? parseJsonResponse<RawReview>(text, "coach_review") : null;
 }
@@ -134,11 +140,13 @@ async function callDeepModel(
   resumeText: string,
   jds: AssembledJd[],
   focusArea: string,
+  onEvent?: RunCoachReviewOptions["onEvent"],
 ): Promise<RawReview | null> {
   const text = await runOneShotPrompt({
     label: "coach_deep_review",
     systemPrompt: COACH_DEEP_REVIEW_SYSTEM_PROMPT,
     prompt: buildCoachDeepReviewUserMessage(resumeText, jds, focusArea),
+    onEvent,
   });
   return text ? parseJsonResponse<RawReview>(text, "coach_deep_review") : null;
 }

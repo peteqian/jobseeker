@@ -45,14 +45,16 @@ export function registerEventRoutes(app: Hono) {
     const projectId = c.req.param("projectId");
 
     return streamSSE(c, async (stream) => {
-      const queue: Array<{ id: string; type: string; data: string }> = [];
+      // SSE event NAME must be sent as `event` (not `type`) for the client's
+      // addEventListener(name) handlers to fire.
+      const queue: Array<{ id: string; event: string; data: string }> = [];
       const state = { aborted: false };
       let notify: (() => void) | null = null;
 
       const unsubscribe = subscribeProjectEvents(projectId, (event) => {
         queue.push({
           id: event.id,
-          type: event.type,
+          event: event.type,
           data: JSON.stringify(event),
         });
         notify?.();

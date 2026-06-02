@@ -71,6 +71,8 @@ const ChatHandlers = ChatRpcGroup.toLayer(
         title?: string;
       }) => chat.createThread(projectId, scope, title),
 
+      "chat.deleteThread": ({ threadId }: { threadId: string }) => chat.deleteThread(threadId),
+
       "chat.getMessages": ({ threadId }: { threadId: string }) => chat.getMessages(threadId),
 
       "chat.sendMessage": ({

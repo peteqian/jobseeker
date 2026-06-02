@@ -25,7 +25,7 @@ export function RightRail({
   pendingGapId,
 }: RightRailProps) {
   return (
-    <aside className="flex w-80 shrink-0 flex-col overflow-hidden rounded-lg border bg-card shadow-sm">
+    <aside className="flex max-h-[28rem] w-full shrink-0 flex-col overflow-hidden rounded-lg border bg-card shadow-sm">
       <Tabs defaultValue="gaps" className="flex h-full flex-col">
         <TabsList className="m-3 mb-0">
           <TabsTrigger value="gaps">Gaps</TabsTrigger>

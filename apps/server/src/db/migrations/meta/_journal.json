@@ -36,6 +36,20 @@
       "when": 1779712760161,
       "tag": "0004_reflective_roland_deschain",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1780178250820,
+      "tag": "0005_empty_warbound",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1780314202594,
+      "tag": "0006_outgoing_stick",
+      "breakpoints": true
     }
   ]
 }

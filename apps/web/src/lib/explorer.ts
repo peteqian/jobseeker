@@ -24,35 +24,6 @@ export function createDomainConfig(domain: string): ExplorerDomainConfig {
   return {
     domain: domain.trim(),
     enabled: true,
-    jobLimit: DEFAULT_JOB_LIMIT,
-    freshness: DEFAULT_FRESHNESS,
-    queries: [],
-  };
-}
-
-export function addQueryToDomain(
-  config: ExplorerDomainConfig,
-  query: string,
-): ExplorerDomainConfig {
-  const trimmed = query.trim();
-  if (!trimmed) return config;
-
-  const key = trimmed.toLowerCase();
-  if (config.queries.some((entry) => entry.toLowerCase() === key)) {
-    return config;
-  }
-
-  return { ...config, queries: [...config.queries, trimmed] };
-}
-
-export function removeQueryFromDomain(
-  config: ExplorerDomainConfig,
-  query: string,
-): ExplorerDomainConfig {
-  const key = query.toLowerCase();
-  return {
-    ...config,
-    queries: config.queries.filter((entry) => entry.toLowerCase() !== key),
   };
 }
 
@@ -107,14 +78,20 @@ export function removeDomainConfig(
 }
 
 export function getExplorerStats(domains: ExplorerDomainConfig[]) {
-  const enabled = domains.filter((entry) => entry.enabled);
-  const totalCap = enabled.reduce((sum, entry) => sum + entry.jobLimit, 0);
-
   return {
     domainCount: domains.length,
-    enabledCount: enabled.length,
-    totalJobCap: totalCap,
+    enabledCount: domains.filter((entry) => entry.enabled).length,
   };
+}
+
+/** Role suggestions drawn from the profile, for the shared search form. */
+export function getRoleSuggestions(profile: StructuredProfile | null): string[] {
+  if (!profile) return [];
+  return [...profile.targeting.roles]
+    .sort((left, right) => right.priority - left.priority)
+    .map((role) => role.title.trim())
+    .filter(Boolean)
+    .slice(0, 6);
 }
 
 export function getExplorerQuerySuggestions(

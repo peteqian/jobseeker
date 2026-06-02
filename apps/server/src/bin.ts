@@ -13,6 +13,7 @@ import { registerEventRoutes } from "./api/events";
 import { registerCoachRoutes } from "./api/coach";
 import { logError, logInfo } from "./lib/log";
 import { runMigrations } from "./db/migrate";
+import { recoverStaleTasks } from "./services/tasks/recover";
 import { startWsServer } from "./ws";
 
 const app = new Hono();
@@ -64,6 +65,7 @@ logInfo("http server boot", {
 });
 
 await runMigrations();
+await recoverStaleTasks();
 
 const server = Bun.serve({
   fetch: app.fetch,

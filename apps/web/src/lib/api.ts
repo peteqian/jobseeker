@@ -97,24 +97,58 @@ export async function createProject(title: string): Promise<ProjectSnapshot> {
 export async function uploadProjectResume(
   projectId: string,
   file: File,
-  options?: { runAtsAnalysis?: boolean; runHrAnalysis?: boolean },
 ): Promise<ResumeUploadResult> {
   const formData = new FormData();
   formData.set("file", file);
-  if (options?.runAtsAnalysis === false) formData.set("runAtsAnalysis", "false");
-  if (options?.runHrAnalysis === false) formData.set("runHrAnalysis", "false");
   return post<ResumeUploadResult>(`/api/projects/${projectId}/resume`, undefined, { formData });
 }
 
 export async function pasteProjectResume(
   projectId: string,
-  input: ResumePasteInput & { runAtsAnalysis?: boolean; runHrAnalysis?: boolean },
+  input: ResumePasteInput,
 ): Promise<ResumeUploadResult> {
   return post<ResumeUploadResult>(`/api/projects/${projectId}/resume/paste`, input);
 }
 
+export interface AtsAnalysisReport {
+  score: number;
+  issues: Array<{
+    severity: "high" | "med" | "low";
+    category: string;
+    description: string;
+    fix: string;
+  }>;
+  recommendations: string[];
+  keywordGaps: string[];
+}
+
+export interface HrAnalysisReport {
+  score: number;
+  strengths: string[];
+  concerns: string[];
+  discussionSeeds: Array<{ topic: string; question: string }>;
+  narrative: string;
+}
+
+export interface ResumeAnalyses {
+  ats: AtsAnalysisReport | null;
+  hr: HrAnalysisReport | null;
+}
+
+export async function getResumeAnalyses(projectId: string): Promise<ResumeAnalyses> {
+  return get<ResumeAnalyses>(`/api/projects/${projectId}/resume-analyses`);
+}
+
 export async function startProjectTask(input: StartTaskInput) {
   return post("/api/tasks", input);
+}
+
+export async function continueTaskLogin(taskId: string): Promise<void> {
+  await post(`/api/tasks/${taskId}/continue-login`);
+}
+
+export async function interruptProjectTask(taskId: string): Promise<void> {
+  await post(`/api/tasks/${taskId}/interrupt`);
 }
 
 export async function submitQuestionAnswers(projectId: string, answers: QuestionAnswerMap) {
@@ -192,10 +226,12 @@ export type ProviderSettings = {
   claude: {
     enabled: boolean;
     binaryPath: string;
+    configPath: string;
   };
   opencode: {
     enabled: boolean;
     binaryPath: string;
+    configPath: string;
     serverUrl: string;
     serverPassword: string;
     customModels: string[];

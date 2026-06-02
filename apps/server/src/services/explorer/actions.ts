@@ -73,7 +73,21 @@ export interface ExplorerActionDeps {
    * so the model can react.
    */
   saveTrajectory: (trajectory: DistilledTrajectory) => Promise<{ saved: boolean; reason?: string }>;
+  /**
+   * Surfaces a sign-in wall to the user (emits the awaiting-login event) so the
+   * UI can prompt them to log in in the open browser window.
+   */
+  onLoginRequired: (reason: string) => void | Promise<void>;
+  /**
+   * Blocks until the user signals they have signed in (or the run aborts). The
+   * agent loop and browser window stay open for the duration.
+   */
+  waitForLogin: () => Promise<void>;
 }
+
+const BLOCKED_SCHEMA = z.object({
+  reason: z.string().min(1),
+});
 
 /** Lifts the wire shape of a distilled trajectory into the canonical type. */
 function toDistilledTrajectory(params: SaveTrajectoryParams): DistilledTrajectory {
@@ -130,8 +144,27 @@ export function buildExplorerActions(deps: ExplorerActionDeps): ActionRegistry {
     },
   };
 
+  const reportBlocked: ActionDefinition<"report_blocked", z.infer<typeof BLOCKED_SCHEMA>> = {
+    name: "report_blocked",
+    description:
+      "Call this when a sign-in/login wall blocks the listings and you cannot view jobs without an account. Give a short reason. This PAUSES the run and asks the user to sign in in the open browser window — do NOT create an account or sign in yourself. When it returns, the user has signed in: continue browsing the listings on the same page. Do NOT set done because of the wall.",
+    schema: asSdkSchema(BLOCKED_SCHEMA),
+    run: async (params): Promise<ActionResult> => {
+      if (deps.signal.aborted) return { ok: false, message: "aborted" };
+      await deps.onLoginRequired(params.reason);
+      await deps.waitForLogin();
+      if (deps.signal.aborted) return { ok: false, message: "aborted" };
+      return {
+        ok: true,
+        message:
+          "The user has signed in. The page should now show listings — continue browsing and report jobs. Do not call done yet.",
+      };
+    },
+  };
+
   const registry = createDefaultActionRegistry();
   registry.register(reportJob);
   registry.register(saveTrajectory);
+  registry.register(reportBlocked);
   return registry;
 }

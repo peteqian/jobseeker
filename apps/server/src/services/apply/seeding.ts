@@ -1,4 +1,4 @@
-import type { AustraliaWorkRight, StructuredProfile } from "@jobseeker/contracts";
+import type { StructuredProfile, WorkRightStatus } from "@jobseeker/contracts";
 
 import type { SemanticKey } from "./classify";
 import type { AnswerSource } from "./types";
@@ -11,11 +11,10 @@ export interface DerivedAnswer {
 }
 
 /** SEEK-style answer text for each "right to work in Australia" category. */
-const WORK_RIGHT_ANSWERS: Record<AustraliaWorkRight, string | null> = {
+const WORK_RIGHT_ANSWERS: Record<WorkRightStatus, string | null> = {
   unspecified: null,
   citizen: "I'm an Australian citizen",
   permanent_resident: "I'm a permanent resident",
-  nz_citizen: "I'm a New Zealand citizen",
   work_visa: "I have a temporary work visa",
   student_visa: "I have a student visa",
   needs_sponsorship: "I require visa sponsorship",
@@ -33,11 +32,15 @@ export function deriveAnswersFromProfile(profile: StructuredProfile): DerivedAns
 
   const rights = profile.workRights;
   if (rights) {
-    const workRight = WORK_RIGHT_ANSWERS[rights.australiaWorkRights];
-    if (workRight)
-      derived.push({ key: "right_to_work_au", answer: workRight, source: "work_rights" });
-    if (rights.visaDetail) {
-      derived.push({ key: "visa_detail", answer: rights.visaDetail, source: "work_rights" });
+    // SEEK is Australia-only, so the screening answer comes from the AU entry.
+    const au = rights.rights.find((entry) => entry.country === "AU");
+    if (au) {
+      const workRight = WORK_RIGHT_ANSWERS[au.status];
+      if (workRight)
+        derived.push({ key: "right_to_work_au", answer: workRight, source: "work_rights" });
+      if (au.visaDetail) {
+        derived.push({ key: "visa_detail", answer: au.visaDetail, source: "work_rights" });
+      }
     }
     if (rights.citizenship.length > 0) {
       derived.push({

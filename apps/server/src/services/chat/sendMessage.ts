@@ -8,17 +8,31 @@ import { db } from "../../db";
 import { chatMessages, projects, topicFiles } from "../../db/schema";
 import { makeId } from "../../lib/ids";
 import { logError, logInfo, logWarn } from "../../lib/log";
-import { ensureCodexHomeDir, ensureScopeDir } from "../../lib/paths";
+import { ensureScopeDir } from "../../lib/paths";
 import {
   buildSystemPrompt,
+  parsePointDetails,
   parseProfileCompleteMarker,
   parseTopicUpdates,
   stripTopicMarkers,
 } from "../../prompts/chat";
+import { upsertPointDetail } from "../projects/profile";
 import { topicPath, writeTopicFile } from "../topics";
-import { getProfile, getResumeText, getThread, loadTopicsWithContent } from "./repository";
+import {
+  getInterviewAgenda,
+  getProfile,
+  getResumeText,
+  getThread,
+  loadTopicsWithContent,
+} from "./repository";
 import { writeProjectRuntimeEvent } from "../runtimeEvents";
-import { emitThreadEvent, updateThreadRuntimeState } from "./runtimeEvents";
+import {
+  clearThreadResumeCursor,
+  emitThreadEvent,
+  getThreadResumeCursor,
+  setThreadResumeCursor,
+  updateThreadRuntimeState,
+} from "./runtimeEvents";
 import type { ChatStreamEvent } from "./service";
 
 function now(): string {
@@ -97,13 +111,16 @@ export function buildSendMessageStream(
       createdAt: now(),
     });
 
-    const [resumeText, profile, topics] = await Promise.all([
+    const [resumeText, profile, topics, agenda] = await Promise.all([
       getResumeText(projectId),
       getProfile(projectId),
       loadTopicsWithContent(projectId),
+      threadScope === "coach"
+        ? getInterviewAgenda(projectId, threadId)
+        : Promise.resolve(undefined),
     ]);
 
-    const systemPrompt = buildSystemPrompt({ resumeText, profile, topics });
+    const systemPrompt = buildSystemPrompt({ resumeText, profile, topics, agenda });
 
     const history = await db
       .select()
@@ -117,6 +134,20 @@ export function buildSendMessageStream(
       content: msg.content,
     }));
 
+    // Resume the provider's native session only when the lock matches this
+    // turn's provider + model; otherwise cold-start (the adapter replays the
+    // full window). Switching provider/model restarts the conversation memory.
+    const cursor = await getThreadResumeCursor(threadId);
+    const resumable =
+      cursor && cursor.provider === session.provider && cursor.model === model.slug ? cursor : null;
+    logInfo("chat resume decision", {
+      threadId,
+      providerId: session.provider,
+      model: model.slug,
+      resuming: Boolean(resumable),
+      historyLength: recentHistory.length,
+    });
+
     try {
       const startedTurn = providerService.respond({
         threadId,
@@ -126,7 +157,7 @@ export function buildSendMessageStream(
         selection,
         runtime: {
           cwd: ensureScopeDir(projectSlug, threadScope),
-          codexHome: ensureCodexHomeDir(projectSlug, threadScope, threadId),
+          ...(resumable ? { resume: { sessionId: resumable.sessionId } } : {}),
         },
       });
       if (!startedTurn) {
@@ -141,8 +172,17 @@ export function buildSendMessageStream(
         yield event;
       }
 
-      const { text: fullResponse } = await providerStream.result;
+      const { text: fullResponse, sessionId } = await providerStream.result;
       const cleanResponse = stripTopicMarkers(fullResponse);
+
+      // Persist the provider's native session id so the next turn resumes it.
+      if (sessionId) {
+        await setThreadResumeCursor(threadId, {
+          provider: session.provider,
+          model: model.slug,
+          sessionId,
+        });
+      }
 
       const assistantMsgId = makeId("cmsg");
       await db.insert(chatMessages).values({
@@ -248,6 +288,27 @@ export function buildSendMessageStream(
         yield event;
       }
 
+      if (threadScope === "coach") {
+        let pointDetailsPersisted = 0;
+        for (const detail of parsePointDetails(fullResponse)) {
+          const updated = await upsertPointDetail(projectId, detail);
+          if (updated) pointDetailsPersisted += 1;
+        }
+        if (pointDetailsPersisted > 0) {
+          logInfo("chat point-details persisted", {
+            turnId,
+            projectId,
+            threadId,
+            count: pointDetailsPersisted,
+          });
+          await writeProjectRuntimeEvent(projectId, "profile.updated", {
+            turnId,
+            threadId,
+            source: "interview_point_detail",
+          });
+        }
+      }
+
       const isProfileComplete = threadScope === "coach" && parseProfileCompleteMarker(fullResponse);
       if (isProfileComplete && history.length >= 5) {
         logInfo("chat profile-complete detected", { turnId, threadId, projectId });
@@ -294,6 +355,9 @@ export function buildSendMessageStream(
       await emitThreadEvent(projectId, threadId, event);
       yield event;
     } catch (error) {
+      // A failed turn may mean the resume cursor is stale (session/rollout
+      // gone, server restarted). Clear it so the next turn cold-starts.
+      await clearThreadResumeCursor(threadId).catch(() => {});
       logError("chat turn failed", {
         turnId,
         threadId,

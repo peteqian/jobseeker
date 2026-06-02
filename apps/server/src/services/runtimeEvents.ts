@@ -37,6 +37,20 @@ function publish(event: RuntimeEvent): void {
 }
 
 /**
+ * Broadcasts a project-scoped event to live SSE subscribers WITHOUT persisting
+ * it. Use for high-frequency, disposable signals (e.g. token-level analysis
+ * deltas) that must not flood the events table or replay on reload.
+ */
+export function publishProjectRuntimeEvent(
+  projectId: string,
+  type: RuntimeEventType,
+  payload: unknown,
+): void {
+  const id = makeId("event");
+  publish({ id, projectId, type, createdAt: now(), payload: payload ?? {} } as RuntimeEvent);
+}
+
+/**
  * Persists a project-scoped runtime event for polling and replay by clients.
  */
 export async function writeProjectRuntimeEvent(

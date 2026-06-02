@@ -1,7 +1,7 @@
 import type { ChatModelSelection, ProviderId, ProviderModel } from "@jobseeker/contracts";
 import { Context } from "effect";
 
-import type { ProviderRuntimeOptions } from "../types";
+import type { ProviderRuntimeOptions, ProviderTurnResult } from "../types";
 import type { ProviderAdapterShape } from "./providerAdapter";
 
 export interface ProviderServiceSession {
@@ -66,7 +66,7 @@ export interface ProviderServiceTurn {
   readonly turnId: string;
   readonly provider: ProviderId;
   readonly stream: AsyncIterable<string> & {
-    result: Promise<{ text: string }>;
+    result: Promise<ProviderTurnResult>;
   };
 }
 

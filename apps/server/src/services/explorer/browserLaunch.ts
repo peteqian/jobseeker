@@ -1,27 +1,11 @@
 import { existsSync } from "node:fs";
-import path from "node:path";
 
-import { dataDir } from "../../env";
-
-/**
- * Builds a stable browser-profile key per `(domain, query)` pair so concurrent
- * runs do not fight over the same Chrome profile directory.
- */
-export function buildQueryProfileKey(domain: string, query: string): string {
-  const clean = (value: string) =>
-    value
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 50);
-  const domainSlug = clean(domain) || "domain";
-  const querySlug = clean(query) || "query";
-  return `${domainSlug}-${querySlug}`;
-}
+import { realChromeExecutable } from "../../lib/browserSession";
+import { browserProfileDir } from "../../lib/paths";
 
 /** Launch settings for the normal explorer attempt. */
-export function getLaunchOptions(pairSlug: string) {
-  const userDataDir = path.join(dataDir, "browser-profiles", `explorer-primary-${pairSlug}`);
+export function getLaunchOptions() {
+  const userDataDir = browserProfileDir();
   const extensionPaths = readExtensionPathsFromEnv();
   return {
     channel: (process.env.EXPLORER_BROWSER_CHANNEL as "chrome" | "chromium" | "msedge") ?? "chrome",
@@ -34,16 +18,19 @@ export function getLaunchOptions(pairSlug: string) {
     locale: process.env.EXPLORER_LOCALE,
     timezoneId: process.env.EXPLORER_TIMEZONE,
     extensionPaths,
+    fingerprintMode: "native",
+    executablePath: realChromeExecutable(),
     autoInstallBrowser: true,
   } as const;
 }
 
 /**
  * Launch settings for the retry attempt after an anti-bot interstitial is
- * detected.
+ * detected. Reuses the SAME persistent profile as the primary attempt so any
+ * sign-in carries over — a separate retry profile would drop the login.
  */
-export function getRetryLaunchOptions(pairSlug: string) {
-  const userDataDir = path.join(dataDir, "browser-profiles", `explorer-retry-${pairSlug}`);
+export function getRetryLaunchOptions() {
+  const userDataDir = browserProfileDir();
   const extensionPaths = readExtensionPathsFromEnv();
   return {
     channel: (process.env.EXPLORER_BROWSER_CHANNEL as "chrome" | "chromium" | "msedge") ?? "chrome",
@@ -56,6 +43,8 @@ export function getRetryLaunchOptions(pairSlug: string) {
     locale: process.env.EXPLORER_LOCALE,
     timezoneId: process.env.EXPLORER_TIMEZONE,
     extensionPaths,
+    fingerprintMode: "native",
+    executablePath: realChromeExecutable(),
     autoInstallBrowser: true,
   } as const;
 }
@@ -79,5 +68,26 @@ export function isBotInterstitial(summary: string): boolean {
     text.includes("anti-bot") ||
     text.includes("captcha") ||
     text.includes("challenge")
+  );
+}
+
+/**
+ * True when the failure is an infrastructure/auth problem from the model layer
+ * (e.g. Codex CLI exited, expired/reused auth token) rather than a page state.
+ *
+ * Such a summary echoes the full prompt — which itself contains words like
+ * "captcha" and "challenge" — and would otherwise false-positive
+ * `isBotInterstitial` and trigger a pointless browser-respawn retry. Detect it
+ * first and skip the retry: relaunching the browser cannot fix expired auth.
+ */
+export function isModelDecisionFailure(summary: string): boolean {
+  const text = summary.toLowerCase();
+  return (
+    text.includes("model decision failed") ||
+    text.includes("codex exited") ||
+    text.includes("refresh_token") ||
+    text.includes("token_expired") ||
+    text.includes("unauthorized") ||
+    text.includes("sign in again")
   );
 }

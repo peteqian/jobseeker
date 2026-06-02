@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer, type AddressInfo } from "node:net";
+import nodePath from "node:path";
 import { createOpencodeClient, type OpencodeClient } from "@opencode-ai/sdk/v2";
 
 export type { OpencodeClient };
@@ -64,6 +65,7 @@ function parseServerUrlFromOutput(output: string): string | null {
 
 export async function startOpenCodeServerProcess(input: {
   readonly binaryPath: string;
+  readonly configPath?: string;
   readonly port?: number;
   readonly hostname?: string;
   readonly timeoutMs?: number;
@@ -71,9 +73,15 @@ export async function startOpenCodeServerProcess(input: {
   const hostname = input.hostname ?? DEFAULT_HOSTNAME;
   const port = input.port ?? (await findAvailablePort());
   const timeoutMs = input.timeoutMs ?? 5_000;
+  // opencode reads its config from $XDG_CONFIG_HOME/opencode; point XDG at the
+  // parent of the configured dir so it uses the user's existing profile.
+  const configDir = input.configPath?.trim();
+  const env = configDir
+    ? { ...process.env, XDG_CONFIG_HOME: nodePath.dirname(configDir) }
+    : process.env;
   const child = spawn(input.binaryPath, ["serve", `--hostname=${hostname}`, `--port=${port}`], {
     stdio: ["ignore", "pipe", "pipe"],
-    env: process.env,
+    env,
   });
 
   child.stdout.setEncoding("utf8");
@@ -145,6 +153,7 @@ export async function startOpenCodeServerProcess(input: {
 
 export async function connectToOpenCodeServer(input: {
   readonly binaryPath: string;
+  readonly configPath?: string;
   readonly serverUrl?: string | null;
 }): Promise<OpenCodeServerConnection> {
   const serverUrl = input.serverUrl?.trim();
@@ -152,5 +161,8 @@ export async function connectToOpenCodeServer(input: {
     return { url: serverUrl, process: null, external: true, close() {} };
   }
 
-  return startOpenCodeServerProcess({ binaryPath: input.binaryPath });
+  return startOpenCodeServerProcess({
+    binaryPath: input.binaryPath,
+    configPath: input.configPath,
+  });
 }

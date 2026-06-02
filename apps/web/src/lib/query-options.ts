@@ -11,6 +11,7 @@ import {
   getProjectEvents,
   getProjects,
   getProviderSettings,
+  getResumeAnalyses,
   getResumeVersions,
 } from "@/lib/api";
 import { coachKeys, eventsKeys, projectsKeys, settingsKeys } from "@/lib/query-keys";
@@ -43,6 +44,13 @@ export function resumeVersionsQueryOptions(projectId: string) {
     queryKey: projectsKeys.resumeVersions(projectId),
     queryFn: () => getResumeVersions(projectId),
     staleTime: 60_000,
+  });
+}
+
+export function resumeAnalysesQueryOptions(projectId: string) {
+  return queryOptions({
+    queryKey: projectsKeys.resumeAnalyses(projectId),
+    queryFn: () => getResumeAnalyses(projectId),
   });
 }
 

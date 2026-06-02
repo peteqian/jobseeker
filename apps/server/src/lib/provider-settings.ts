@@ -13,10 +13,12 @@ export interface ProviderSettings {
   claude: {
     enabled: boolean;
     binaryPath: string;
+    configPath: string;
   };
   opencode: {
     enabled: boolean;
     binaryPath: string;
+    configPath: string;
     serverUrl: string;
     serverPassword: string;
     customModels: string[];
@@ -32,29 +34,53 @@ export type ProviderSettingsPatch = {
   claude?: {
     enabled?: boolean;
     binaryPath?: string;
+    configPath?: string;
   };
   opencode?: {
     enabled?: boolean;
     binaryPath?: string;
+    configPath?: string;
     serverUrl?: string;
     serverPassword?: string;
     customModels?: string[];
   };
 };
 
+/**
+ * The Codex home (CODEX_HOME) the user's existing CLI auth lives in. Prefers
+ * `~/.codex`, falling back to the XDG `~/.config/codex`, picking whichever
+ * actually holds an `auth.json`. Defaulting to this means runs reuse the
+ * profile the user already set up with `codex login` instead of an empty or
+ * isolated home. (claude/opencode need no equivalent — their CLIs read their
+ * own config when we spawn the binary.)
+ */
+function resolveCodexHome(): string {
+  const candidates = [
+    path.join(os.homedir(), ".codex"),
+    path.join(os.homedir(), ".config", "codex"),
+  ];
+  return candidates.find((dir) => existsSync(path.join(dir, "auth.json"))) ?? candidates[0];
+}
+
+/** Standard config dirs the claude / opencode CLIs already read. */
+const defaultClaudeConfig = () => path.join(os.homedir(), ".claude");
+const defaultOpencodeConfig = () => path.join(os.homedir(), ".config", "opencode");
+
 const DEFAULT_PROVIDER_SETTINGS: ProviderSettings = {
   codex: {
     enabled: true,
     binaryPath: "codex",
-    homePath: "",
+    homePath: resolveCodexHome(),
   },
   claude: {
     enabled: true,
     binaryPath: "claude",
+    configPath: defaultClaudeConfig(),
   },
   opencode: {
     enabled: true,
     binaryPath: "opencode",
+    configPath: defaultOpencodeConfig(),
     serverUrl: "",
     serverPassword: "",
     customModels: [],
@@ -87,11 +113,17 @@ function normalize(settings: Partial<ProviderSettings> | null | undefined): Prov
       enabled: settings?.claude?.enabled ?? DEFAULT_PROVIDER_SETTINGS.claude.enabled,
       binaryPath:
         settings?.claude?.binaryPath?.trim() || DEFAULT_PROVIDER_SETTINGS.claude.binaryPath,
+      configPath: normalizePath(
+        settings?.claude?.configPath || DEFAULT_PROVIDER_SETTINGS.claude.configPath,
+      ),
     },
     opencode: {
       enabled: settings?.opencode?.enabled ?? DEFAULT_PROVIDER_SETTINGS.opencode.enabled,
       binaryPath:
         settings?.opencode?.binaryPath?.trim() || DEFAULT_PROVIDER_SETTINGS.opencode.binaryPath,
+      configPath: normalizePath(
+        settings?.opencode?.configPath || DEFAULT_PROVIDER_SETTINGS.opencode.configPath,
+      ),
       serverUrl:
         settings?.opencode?.serverUrl?.trim() ?? DEFAULT_PROVIDER_SETTINGS.opencode.serverUrl,
       serverPassword:
@@ -127,10 +159,12 @@ export function updateProviderSettings(next: ProviderSettingsPatch): ProviderSet
     claude: {
       enabled: next.claude?.enabled ?? current.claude.enabled,
       binaryPath: next.claude?.binaryPath ?? current.claude.binaryPath,
+      configPath: next.claude?.configPath ?? current.claude.configPath,
     },
     opencode: {
       enabled: next.opencode?.enabled ?? current.opencode.enabled,
       binaryPath: next.opencode?.binaryPath ?? current.opencode.binaryPath,
+      configPath: next.opencode?.configPath ?? current.opencode.configPath,
       serverUrl: next.opencode?.serverUrl ?? current.opencode.serverUrl,
       serverPassword: next.opencode?.serverPassword ?? current.opencode.serverPassword,
       customModels: next.opencode?.customModels ?? current.opencode.customModels,

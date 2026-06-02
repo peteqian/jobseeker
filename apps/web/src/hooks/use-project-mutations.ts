@@ -14,7 +14,9 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   createCoachAnchorThread,
   createProject as createProjectRequest,
+  continueTaskLogin,
   deleteProjectJob,
+  interruptProjectTask,
   deleteProjectResume,
   pasteProjectResume,
   startCoachReview,
@@ -75,11 +77,10 @@ export function useUploadResume() {
     {
       projectId: string;
       file: File;
-      options?: { runAtsAnalysis?: boolean; runHrAnalysis?: boolean };
     }
   >({
-    mutationFn: async ({ projectId, file, options }) => {
-      await uploadProjectResume(projectId, file, options);
+    mutationFn: async ({ projectId, file }) => {
+      await uploadProjectResume(projectId, file);
     },
     invalidateKeys: [],
     onSuccess: async () => {
@@ -93,7 +94,7 @@ export function usePasteResume() {
     void,
     {
       projectId: string;
-      input: ResumePasteInput & { runAtsAnalysis?: boolean; runHrAnalysis?: boolean };
+      input: ResumePasteInput;
     }
   >({
     mutationFn: async ({ projectId, input }) => {
@@ -164,6 +165,18 @@ export function useUpdateDocument() {
 export function useStartTask() {
   return useMutation({
     mutationFn: (input: StartTaskInput) => startProjectTask(input),
+  });
+}
+
+export function useInterruptTask() {
+  return useMutation({
+    mutationFn: (taskId: string) => interruptProjectTask(taskId),
+  });
+}
+
+export function useContinueLogin() {
+  return useMutation({
+    mutationFn: (taskId: string) => continueTaskLogin(taskId),
   });
 }
 

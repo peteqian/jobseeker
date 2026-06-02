@@ -9,14 +9,21 @@ import {
   OPENCODE_FALLBACK_MODELS,
   parseOpenCodeModelSlug,
 } from "../opencodeRuntime";
-import type { ChatProvider, ProviderRuntimeOptions } from "../types";
+import type { ChatProvider, ProviderRuntimeOptions, ProviderTurnResult } from "../types";
 import { mergeProviderModels, resolveProviderModel } from "../utils";
 
-function renderPrompt(systemPrompt: string, history: { role: string; content: string }[]): string {
+function renderPrompt(
+  systemPrompt: string,
+  history: { role: string; content: string }[],
+  resuming: boolean,
+): string {
+  // On resume the opencode session already holds prior turns; send only the
+  // newest message (plus the live system prompt) to avoid duplicating context.
+  const messages = resuming ? history.slice(-1) : history;
   return [
     systemPrompt,
     "",
-    ...history.map((msg) => `${msg.role === "user" ? "User" : "Assistant"}: ${msg.content}`),
+    ...messages.map((msg) => `${msg.role === "user" ? "User" : "Assistant"}: ${msg.content}`),
   ].join("\n");
 }
 
@@ -41,7 +48,7 @@ async function runAgainstOpenCode(
   selection: ChatModelSelection | undefined,
   runtime: ProviderRuntimeOptions | undefined,
   signal?: AbortSignal,
-): Promise<{ text: string }> {
+): Promise<ProviderTurnResult> {
   if (signal?.aborted) {
     throw new Error("Provider turn interrupted");
   }
@@ -49,6 +56,7 @@ async function runAgainstOpenCode(
   const settings = getProviderSettings();
   const connection = await connectToOpenCodeServer({
     binaryPath: settings.opencode.binaryPath,
+    configPath: settings.opencode.configPath,
     serverUrl: settings.opencode.serverUrl,
   });
 
@@ -70,23 +78,30 @@ async function runAgainstOpenCode(
       modelID: model.slug,
     };
 
-    const session = await client.session.create({ title: "Jobseeker Chat" });
-    if (!session.data) {
-      throw new Error("OpenCode session.create returned no session payload.");
+    // Resume the existing session when we have one; else create a fresh one.
+    let sessionId = runtime?.resume?.sessionId;
+    if (!sessionId) {
+      const session = await client.session.create({ title: "Jobseeker Chat" });
+      if (!session.data) {
+        throw new Error("OpenCode session.create returned no session payload.");
+      }
+      sessionId = session.data.id;
     }
 
     await client.session.prompt({
-      sessionID: session.data.id,
+      sessionID: sessionId,
       model: { providerID: parsed.providerID, modelID: parsed.modelID },
-      parts: [{ type: "text", text: renderPrompt(systemPrompt, history) }],
+      parts: [
+        { type: "text", text: renderPrompt(systemPrompt, history, Boolean(runtime?.resume)) },
+      ],
     });
 
     if (signal?.aborted) {
       throw new Error("Provider turn interrupted");
     }
 
-    const messages = await client.session.messages({ sessionID: session.data.id });
-    return { text: readAssistantTextFromMessages(messages.data ?? []) };
+    const messages = await client.session.messages({ sessionID: sessionId });
+    return { text: readAssistantTextFromMessages(messages.data ?? []), sessionId };
   } finally {
     connection.close();
   }

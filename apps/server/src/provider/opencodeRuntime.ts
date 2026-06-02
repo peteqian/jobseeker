@@ -92,6 +92,7 @@ export async function loadOpenCodeModels(input?: {
     input?.connection ??
     (await connectToOpenCodeServer({
       binaryPath: settings.opencode.binaryPath,
+      configPath: settings.opencode.configPath,
       serverUrl: settings.opencode.serverUrl,
     }));
 

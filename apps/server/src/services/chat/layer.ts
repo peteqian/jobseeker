@@ -30,6 +30,7 @@ import {
   tryRecordThreadCommand,
 } from "./projectionStore";
 import {
+  deleteThreadCascade,
   getOrCreateDefaultThread,
   getThread,
   getThreadMessages,
@@ -122,6 +123,14 @@ export const ChatServiceLive = Layer.effect(
           };
           await db.insert(chatThreads).values(row);
           return row;
+        }),
+
+      deleteThread: (threadId: string) =>
+        Effect.promise(async (): Promise<boolean> => {
+          // Tear down any live provider session, then remove all thread rows.
+          providerService.stopSession(threadId);
+          await deleteThreadCascade(threadId);
+          return true;
         }),
 
       getMessages: (threadId: string) => Effect.promise(() => getThreadMessages(threadId)),

@@ -11,6 +11,7 @@ export function makeCodexAdapter(): ProviderAdapterShape {
     models: provider.models,
     available: provider.available,
     run: provider.run,
+    runEvents: provider.runEvents,
   };
 }
 

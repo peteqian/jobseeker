@@ -23,6 +23,7 @@ export interface AtsAnalysisResult {
 export interface RunAtsAnalysisOptions {
   projectId: string;
   modelSelection?: ChatModelSelection;
+  onEvent?: (event: import("../../provider/types").ProviderStreamEvent) => void;
 }
 
 const VALID_SEVERITIES: ReadonlySet<string> = new Set(["high", "med", "low"]);
@@ -50,6 +51,7 @@ export async function runAtsAnalysis(
     systemPrompt: ATS_ANALYSIS_SYSTEM_PROMPT,
     prompt: buildAtsAnalysisUserMessage(resumeText, targetRoles),
     modelSelection: options.modelSelection,
+    onEvent: options.onEvent,
   });
   if (!text) return null;
 

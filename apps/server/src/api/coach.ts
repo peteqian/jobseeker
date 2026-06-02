@@ -10,6 +10,7 @@ import type {
 
 import { db } from "../db";
 import {
+  chatMessages,
   chatThreads,
   coachClaims,
   coachGaps,
@@ -40,6 +41,7 @@ export function registerCoachRoutes(app: Hono) {
       deepReview: body.deep,
       pastedJds: body.pastedJds,
       useExplorer: body.useExplorer,
+      modelSelection: body.modelSelection,
     });
     return c.json(task, 202);
   });
@@ -92,6 +94,20 @@ export function registerCoachRoutes(app: Hono) {
       threadId,
       createdAt: timestamp,
     });
+
+    // Seed a driven opening so the interview starts on this point instead of
+    // waiting for the user to ask. The agenda in the system prompt carries the
+    // rest of the session.
+    if (anchorType === "claim") {
+      await db.insert(chatMessages).values({
+        id: makeId("cmsg"),
+        projectId: resolved.projectId,
+        threadId,
+        role: "assistant",
+        content: `Let's dig into this point: you wrote "${resolved.title}". What did you actually do here — the scope, the decisions you made, and the outcome (with numbers if you have them)?`,
+        createdAt: timestamp,
+      });
+    }
 
     return c.json<CoachThreadAnchor>(
       { id: mappingId, anchorType, anchorId, threadId, createdAt: timestamp },

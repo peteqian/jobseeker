@@ -87,7 +87,7 @@ export function ProfileModelSettings({
 
                 onSelectionChange({
                   ...selection,
-                  provider: activeProvider?.id ?? selection?.provider ?? "openai",
+                  provider: activeProvider?.id ?? selection?.provider ?? "codex",
                   model: model.slug,
                   effort: model.capabilities.defaultEffort,
                 });
@@ -110,7 +110,7 @@ export function ProfileModelSettings({
                 onChange={(e) => {
                   onSelectionChange({
                     ...selection,
-                    provider: selection?.provider ?? activeProvider?.id ?? "openai",
+                    provider: selection?.provider ?? activeProvider?.id ?? "codex",
                     model: selection?.model ?? activeModel?.slug ?? "",
                     effort: e.target.value,
                   });

@@ -1,12 +1,12 @@
 import { Hono } from "hono";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 
 import { makeId } from "../lib/ids";
 import { extractResumeText, getExtractedName } from "../services/resume";
 import { buildProjectSnapshot } from "../services/projects/snapshot";
 import { startTask } from "../services/tasks/startTask";
 import { db } from "../db";
-import { documents, projects } from "../db/schema";
+import { documents, projects, resumeAnalyses } from "../db/schema";
 
 const now = () => new Date().toISOString();
 
@@ -44,8 +44,6 @@ export function registerResumeRoutes(app: Hono) {
     const projectId = c.req.param("projectId");
     const formData = await c.req.formData();
     const file = formData.get("file");
-    const runAts = formData.get("runAtsAnalysis") !== "false";
-    const runHr = formData.get("runHrAnalysis") !== "false";
 
     if (!(file instanceof File)) {
       return c.json({ error: "Resume file is required." }, 400);
@@ -86,21 +84,17 @@ export function registerResumeRoutes(app: Hono) {
       focusArea: "Overall resume",
     }).catch(() => {});
 
-    if (runAts) {
-      void startTask({
-        projectId,
-        type: "ats_analysis",
-        resumeDocId: documentId,
-      }).catch(() => {});
-    }
+    void startTask({
+      projectId,
+      type: "ats_analysis",
+      resumeDocId: documentId,
+    }).catch(() => {});
 
-    if (runHr) {
-      void startTask({
-        projectId,
-        type: "hr_analysis",
-        resumeDocId: documentId,
-      }).catch(() => {});
-    }
+    void startTask({
+      projectId,
+      type: "hr_analysis",
+      resumeDocId: documentId,
+    }).catch(() => {});
 
     return c.json({ documentId, name: file.name }, 201);
   });
@@ -110,16 +104,12 @@ export function registerResumeRoutes(app: Hono) {
     const input = (await c.req.json()) as {
       text?: string;
       name?: string;
-      runAtsAnalysis?: boolean;
-      runHrAnalysis?: boolean;
     };
 
     if (!input.text?.trim()) {
       return c.json({ error: "Resume text is required." }, 400);
     }
 
-    const runAts = input.runAtsAnalysis !== false;
-    const runHr = input.runHrAnalysis !== false;
     const timestamp = now();
     const documentId = makeId("doc");
     const content = input.text.trim();
@@ -155,21 +145,17 @@ export function registerResumeRoutes(app: Hono) {
       focusArea: "Overall resume",
     }).catch(() => {});
 
-    if (runAts) {
-      void startTask({
-        projectId,
-        type: "ats_analysis",
-        resumeDocId: documentId,
-      }).catch(() => {});
-    }
+    void startTask({
+      projectId,
+      type: "ats_analysis",
+      resumeDocId: documentId,
+    }).catch(() => {});
 
-    if (runHr) {
-      void startTask({
-        projectId,
-        type: "hr_analysis",
-        resumeDocId: documentId,
-      }).catch(() => {});
-    }
+    void startTask({
+      projectId,
+      type: "hr_analysis",
+      resumeDocId: documentId,
+    }).catch(() => {});
 
     return c.json({ documentId }, 201);
   });
@@ -206,6 +192,31 @@ export function registerResumeRoutes(app: Hono) {
     });
 
     return c.json({ versions });
+  });
+
+  app.get("/api/projects/:projectId/resume-analyses", async (c) => {
+    const projectId = c.req.param("projectId");
+    const project = await db.select().from(projects).where(eq(projects.id, projectId)).get();
+    const resumeDocId = project?.activeResumeSourceId;
+
+    if (!resumeDocId) {
+      return c.json({ ats: null, hr: null });
+    }
+
+    const rows = await db
+      .select()
+      .from(resumeAnalyses)
+      .where(
+        and(eq(resumeAnalyses.projectId, projectId), eq(resumeAnalyses.resumeDocId, resumeDocId)),
+      )
+      .all();
+
+    const parse = (kind: "ats" | "hr") => {
+      const row = rows.find((r) => r.kind === kind);
+      return row ? JSON.parse(row.resultJson) : null;
+    };
+
+    return c.json({ ats: parse("ats"), hr: parse("hr") });
   });
 
   app.post("/api/projects/:projectId/resume/activate", async (c) => {

@@ -22,6 +22,7 @@ export interface HrAnalysisResult {
 export interface RunHrAnalysisOptions {
   projectId: string;
   modelSelection?: ChatModelSelection;
+  onEvent?: (event: import("../../provider/types").ProviderStreamEvent) => void;
 }
 
 export async function runHrAnalysis(
@@ -41,6 +42,7 @@ export async function runHrAnalysis(
     systemPrompt: HR_ANALYSIS_SYSTEM_PROMPT,
     prompt: buildHrAnalysisUserMessage(resumeText, targetRoles),
     modelSelection: options.modelSelection,
+    onEvent: options.onEvent,
   });
   if (!text) return null;
 

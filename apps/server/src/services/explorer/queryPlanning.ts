@@ -1,11 +1,6 @@
-import { deriveSearchIntent } from "@jobseeker/contracts";
-import type { ExplorerDomainConfig, StructuredProfile } from "@jobseeker/contracts";
+import type { ExplorerDomainConfig, ExplorerSearchConfig } from "@jobseeker/contracts";
 
-export type QuerySource =
-  | "domain_explicit"
-  | "profile_role"
-  | "profile_role_location"
-  | "profile_keyword";
+export type QuerySource = "search_role";
 
 export interface PlannedQuery {
   query: string;
@@ -13,7 +8,6 @@ export interface PlannedQuery {
 }
 
 const MAX_QUERIES_PER_DOMAIN = 8;
-const MAX_KEYWORD_QUERIES = 2;
 
 const ARRANGEMENT_TOKENS = new Set(["remote", "hybrid", "on-site", "onsite", "in-office"]);
 const LOCATION_HINT_TOKENS = new Set([
@@ -60,58 +54,24 @@ function isLowSignalQuery(raw: string): boolean {
 }
 
 /**
- * Chooses the concrete search queries to run for a domain.
- *
- * Explicit domain queries win. If none are configured, the function derives a
- * bounded set of role/location/keyword queries from the structured profile.
+ * The concrete keyword queries to run on each enabled domain: the shared run
+ * roles, one query per role. Location and work-arrangement are NOT folded into
+ * the keyword here — they belong in the site's dedicated inputs and are carried
+ * separately on `NavigationContext`. Low-signal entries (bare locations,
+ * arrangement words) are dropped and duplicates collapsed.
  */
-export function getQueriesForDomain(
-  domain: ExplorerDomainConfig,
-  profile: StructuredProfile | null,
-): PlannedQuery[] {
+export function getSearchQueries(search: ExplorerSearchConfig): PlannedQuery[] {
   const seen = new Set<string>();
   const out: PlannedQuery[] = [];
 
-  const push = (raw: string, source: QuerySource): boolean => {
-    const value = raw.trim();
-    if (!value) return false;
-    if (isLowSignalQuery(value)) return false;
+  for (const role of search.roles) {
+    const value = role.trim();
+    if (!value || isLowSignalQuery(value)) continue;
     const key = value.toLowerCase();
-    if (seen.has(key)) return false;
+    if (seen.has(key)) continue;
     seen.add(key);
-    out.push({ query: value, source });
-    return out.length >= MAX_QUERIES_PER_DOMAIN;
-  };
-
-  for (const query of domain.queries) {
-    if (push(query, "domain_explicit")) break;
-  }
-
-  if (out.length > 0) {
-    return out;
-  }
-
-  if (!profile) {
-    return [];
-  }
-
-  const intent = deriveSearchIntent(profile);
-  const topLocation = intent.locations[0];
-  const wantsRemoteOnly = intent.locations.length > 0 && intent.locations[0].remote === "full";
-
-  for (const role of intent.roles) {
-    const shouldAppendLocation = topLocation && !wantsRemoteOnly && topLocation.city.trim();
-    if (shouldAppendLocation) {
-      if (push(`${role.title} ${topLocation.city}`, "profile_role_location")) break;
-    } else if (push(role.title, "profile_role")) {
-      break;
-    }
-  }
-
-  if (out.length < MAX_QUERIES_PER_DOMAIN) {
-    for (const keyword of intent.effectiveKeywords.slice(0, MAX_KEYWORD_QUERIES)) {
-      if (push(keyword, "profile_keyword")) break;
-    }
+    out.push({ query: value, source: "search_role" });
+    if (out.length >= MAX_QUERIES_PER_DOMAIN) break;
   }
 
   return out;

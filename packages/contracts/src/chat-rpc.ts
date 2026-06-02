@@ -231,6 +231,7 @@ export const CHAT_WS_METHODS = {
   listProviders: "chat.listProviders",
   listThreads: "chat.listThreads",
   createThread: "chat.createThread",
+  deleteThread: "chat.deleteThread",
   sendMessage: "chat.sendMessage",
   getMessages: "chat.getMessages",
   dismissInsight: "chat.dismissInsight",
@@ -284,6 +285,12 @@ export const CreateThreadRpc = Rpc.make(CHAT_WS_METHODS.createThread, {
     title: Schema.optionalKey(Schema.String),
   }),
   success: ChatThreadSchema,
+  error: ChatError,
+});
+
+export const DeleteThreadRpc = Rpc.make(CHAT_WS_METHODS.deleteThread, {
+  payload: Schema.Struct({ threadId: Schema.String }),
+  success: Schema.Boolean,
   error: ChatError,
 });
 
@@ -357,6 +364,7 @@ export const ChatRpcGroup = RpcGroup.make(
   ListProvidersRpc,
   ListThreadsRpc,
   CreateThreadRpc,
+  DeleteThreadRpc,
   SendMessageRpc,
   GetMessagesRpc,
   DismissInsightRpc,

@@ -1,3 +1,6 @@
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import path from "node:path";
 import type { Hono } from "hono";
 import {
   getProviderSettings,
@@ -12,6 +15,19 @@ type ConnectionStatus = {
   ok: boolean;
   message: string;
 };
+
+/**
+ * Whether a Codex auth.json exists in the home that runs would use. Checks the
+ * configured home when set, else the standard live locations. Presence means
+ * "signed in" — it does not prove the token is unexpired, but `--version` alone
+ * tells the user nothing, and a missing file is the common "not logged in" case.
+ */
+function codexAuthExists(homePath: string): boolean {
+  const homes = homePath.trim()
+    ? [homePath]
+    : [path.join(homedir(), ".codex"), path.join(homedir(), ".config", "codex")];
+  return homes.some((home) => existsSync(path.join(home, "auth.json")));
+}
 
 async function checkCodex(): Promise<ConnectionStatus> {
   const { codex } = getProviderSettings();
@@ -34,11 +50,14 @@ async function checkCodex(): Promise<ConnectionStatus> {
     const stdout = await new Response(proc.stdout).text();
 
     if (exitCode === 0) {
+      const authed = codexAuthExists(codex.homePath);
       return {
         name: "Codex",
         id: "codex",
-        ok: true,
-        message: `Found: ${stdout.trim() || binPath}`,
+        ok: authed,
+        message: authed
+          ? `Signed in · ${stdout.trim() || binPath}`
+          : "Binary found, but not signed in. Run `codex login`.",
       };
     }
 

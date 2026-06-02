@@ -8,11 +8,26 @@ import type {
 } from "@jobseeker/contracts";
 
 import { db } from "../../db";
-import { chatMessages, chatThreads, topicFiles } from "../../db/schema";
+import {
+  chatMessages,
+  chatThreads,
+  claimThreads,
+  coachThreadAnchors,
+  providerSessionRuntime,
+  threadCommands,
+  threadEvents,
+  threadProjections,
+  topicFiles,
+} from "../../db/schema";
 import { makeId } from "../../lib/ids";
+import type { InterviewAgenda } from "../../prompts/chat";
+import { getLatestCoachReview } from "../coach/review";
 import { readProjectProfile } from "../projects/profile";
 import { getProjectResumeText } from "../projects/resume";
 import { readTopicFile } from "../topics";
+
+/** Coach claims worth probing first: weakest before polished. */
+const CLAIM_PRIORITY: Record<string, number> = { weak: 0, needs_impact: 1, strong: 2 };
 
 function now(): string {
   return new Date().toISOString();
@@ -26,6 +41,34 @@ export async function getResumeText(projectId: string): Promise<string | null> {
 /** Reuses the shared project profile lookup from the chat context layer. */
 export async function getProfile(projectId: string) {
   return readProjectProfile(projectId);
+}
+
+/**
+ * Builds the driven-interview agenda for a coach thread: the latest review's
+ * claims ordered weakest-first, plus the claim this thread is anchored to (when
+ * the thread was opened to discuss a specific point). Returns undefined when
+ * there is no review to drive from.
+ */
+export async function getInterviewAgenda(
+  projectId: string,
+  threadId: string,
+): Promise<InterviewAgenda | undefined> {
+  const review = await getLatestCoachReview(projectId);
+  if (!review || review.claims.length === 0) return undefined;
+
+  const claims = [...review.claims].sort(
+    (a, b) => (CLAIM_PRIORITY[a.status] ?? 3) - (CLAIM_PRIORITY[b.status] ?? 3),
+  );
+
+  const anchor = await db
+    .select()
+    .from(coachThreadAnchors)
+    .where(
+      and(eq(coachThreadAnchors.threadId, threadId), eq(coachThreadAnchors.anchorType, "claim")),
+    )
+    .get();
+
+  return { claims, currentClaimId: anchor?.anchorId };
 }
 
 /** Loads all topic files and their current markdown content for prompt building. */
@@ -134,6 +177,25 @@ export async function getThread(threadId: string): Promise<typeof chatThreads.$i
     throw new Error("Thread not found");
   }
   return thread;
+}
+
+/**
+ * Hard-deletes a thread and every row that references it. FK cascade isn't
+ * relied on (the connection doesn't enable PRAGMA foreign_keys), so children
+ * are removed explicitly in a transaction. The codex session rollout in the
+ * shared codex home is left in place — harmless and not keyed for cleanup.
+ */
+export async function deleteThreadCascade(threadId: string): Promise<void> {
+  db.transaction((tx) => {
+    tx.delete(chatMessages).where(eq(chatMessages.threadId, threadId)).run();
+    tx.delete(threadEvents).where(eq(threadEvents.threadId, threadId)).run();
+    tx.delete(threadProjections).where(eq(threadProjections.threadId, threadId)).run();
+    tx.delete(threadCommands).where(eq(threadCommands.threadId, threadId)).run();
+    tx.delete(providerSessionRuntime).where(eq(providerSessionRuntime.threadId, threadId)).run();
+    tx.delete(coachThreadAnchors).where(eq(coachThreadAnchors.threadId, threadId)).run();
+    tx.delete(claimThreads).where(eq(claimThreads.threadId, threadId)).run();
+    tx.delete(chatThreads).where(eq(chatThreads.id, threadId)).run();
+  });
 }
 
 /** Returns persisted chat messages in chronological order for one thread. */

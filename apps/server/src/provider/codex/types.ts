@@ -13,6 +13,8 @@ export interface CodexSessionConfig {
   readonly sandboxMode?: CodexSandboxMode;
   readonly approvalPolicy?: CodexApprovalPolicy;
   readonly skipGitRepoCheck?: boolean;
+  /** When set, resume this persisted codex thread instead of starting fresh. */
+  readonly resumeId?: string;
 }
 
 export type CodexItem =

@@ -1,13 +1,24 @@
-import type { StructuredProfile, TopicFileMeta } from "@jobseeker/contracts";
+import type { CoachClaim, StructuredProfile, TopicFileMeta } from "@jobseeker/contracts";
 
 interface TopicWithContent extends TopicFileMeta {
   content: string;
+}
+
+/**
+ * Drives the interview through specific resume points. `claims` are ordered by
+ * priority (weakest first); `currentClaimId` is the point the thread is
+ * anchored to, if any.
+ */
+export interface InterviewAgenda {
+  claims: CoachClaim[];
+  currentClaimId?: string;
 }
 
 interface PromptContext {
   resumeText: string | null;
   profile: StructuredProfile | null;
   topics: TopicWithContent[];
+  agenda?: InterviewAgenda;
 }
 
 export function buildSystemPrompt(ctx: PromptContext): string {
@@ -85,7 +96,43 @@ ${topicBlocks.join("\n\n")}
 </topics>`);
   }
 
+  if (ctx.agenda && ctx.agenda.claims.length > 0) {
+    parts.push(buildAgendaSection(ctx.agenda));
+  }
+
   return parts.join("\n\n");
+}
+
+/**
+ * Renders the driven-interview agenda: the resume points to walk in order, the
+ * point currently in focus, and the `point-detail` marker the model emits once
+ * it has gathered enough to expand a point.
+ */
+function buildAgendaSection(agenda: InterviewAgenda): string {
+  const lines = agenda.claims.map((claim, index) => {
+    const marker = claim.id === agenda.currentClaimId ? " ← current" : "";
+    return `${index + 1}. [${claim.status}] "${claim.text}" (claimId: ${claim.id})${marker}`;
+  });
+
+  return `## Interview agenda — drive this session
+
+You are running a DRIVEN interview. Walk the resume points below one at a time, in the order listed (weakest claims first). They are the agenda for this session.
+
+${lines.join("\n")}
+
+For the current point:
+- Open with "You wrote '<the claim text>'." then ask what they actually did — the scope, the decisions they made, the measurable outcome, who was involved.
+- Ask 1-2 pointed follow-ups until you have concrete evidence, not vague claims.
+- When you have enough to expand the point, emit a point-detail marker (below), then advance to the next unfinished point and name it.
+
+Emit this marker at the very end of your response (after any topic markers) once you've gathered enough on a point:
+
+<!-- point-detail: {"claimId": "the-claim-id", "originalText": "the original resume line", "expandedDetail": "the richer story in 2-4 sentences", "evidence": ["metric or fact one", "metric or fact two"], "resumeAngle": "a tightened draft resume bullet"} -->
+
+Rules for point-detail markers:
+- Only emit when you have real, specific evidence for that point.
+- The content must be valid JSON; use \\n for any newlines inside string values.
+- Set claimId to the claimId from the agenda when expanding an agenda point.`;
 }
 
 // ---------------------------------------------------------------------------
@@ -145,11 +192,49 @@ export function parseProfileCompleteMarker(text: string): boolean {
   return PROFILE_COMPLETE_PATTERN.test(text);
 }
 
+const POINT_DETAIL_PATTERN = /<!--\s*point-detail:\s*(\{[\s\S]*?\})\s*-->/g;
+
+export interface ParsedPointDetail {
+  claimId?: string;
+  originalText: string;
+  expandedDetail: string;
+  evidence: string[];
+  resumeAngle?: string;
+}
+
+/** Extracts point-detail markers emitted by the driven interview. */
+export function parsePointDetails(text: string): ParsedPointDetail[] {
+  const results: ParsedPointDetail[] = [];
+
+  for (const match of text.matchAll(POINT_DETAIL_PATTERN)) {
+    try {
+      const raw = JSON.parse(match[1]) as Record<string, unknown>;
+      const expandedDetail = typeof raw.expandedDetail === "string" ? raw.expandedDetail : "";
+      const originalText = typeof raw.originalText === "string" ? raw.originalText : "";
+      if (!expandedDetail) continue;
+      results.push({
+        claimId: typeof raw.claimId === "string" ? raw.claimId : undefined,
+        originalText,
+        expandedDetail,
+        evidence: Array.isArray(raw.evidence)
+          ? raw.evidence.filter((v): v is string => typeof v === "string")
+          : [],
+        resumeAngle: typeof raw.resumeAngle === "string" ? raw.resumeAngle : undefined,
+      });
+    } catch {
+      // Skip malformed markers; a bad marker must not break the turn.
+    }
+  }
+
+  return results;
+}
+
 export function stripTopicMarkers(text: string): string {
   return text
     .replace(TOPIC_UPDATE_PATTERN, "")
     .replace(TOPIC_CREATE_PATTERN, "")
     .replace(PROFILE_COMPLETE_PATTERN, "")
+    .replace(POINT_DETAIL_PATTERN, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }

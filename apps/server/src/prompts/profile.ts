@@ -15,10 +15,20 @@ Schema:
       "id": "uuid",
       "company": "company name",
       "title": "job title",
-      "duration": "e.g. Jan 2020 - Present",
+      "startDate": "start month as YYYY-MM, e.g. 2020-01",
+      "endDate": "end month as YYYY-MM, or null if this is the current role",
       "achievements": ["concrete achievement with metrics if available"],
       "skillsUsed": ["skill1", "skill2"],
       "isCurrent": true/false
+    }
+  ],
+  "projects": [
+    {
+      "id": "uuid",
+      "name": "project name",
+      "description": "what it is and what was built",
+      "skillsUsed": ["skill1", "skill2"],
+      "url": "repo/demo link or null"
     }
   ],
   "skills": [
@@ -71,8 +81,13 @@ Schema:
   },
   "workRights": {
     "citizenship": ["ISO 3166-1 alpha-2 country codes, e.g. 'AU', 'GB'"],
-    "australiaWorkRights": "unspecified" | "citizen" | "permanent_resident" | "nz_citizen" | "work_visa" | "student_visa" | "needs_sponsorship",
-    "visaDetail": "visa subclass or null"
+    "rights": [
+      {
+        "country": "ISO 3166-1 alpha-2 country code, e.g. 'AU'",
+        "status": "citizen" | "permanent_resident" | "work_visa" | "student_visa" | "needs_sponsorship",
+        "visaDetail": "visa subclass or null"
+      }
+    ]
   }
 }
 
@@ -80,8 +95,9 @@ Rules:
 - Infer the most likely next role from career trajectory. If they are a Senior Engineer, they probably want Senior or Lead roles.
 - Extract ALL skills mentioned, categorized properly.
 - For experiences, extract concrete achievements. Prefer metrics.
+- Put personal, side, or open-source projects in "projects", NOT "experiences". These show skills beyond paid work; capture the skills each demonstrates. Leave empty if none are mentioned.
 - Infer location preferences from where they have worked.
 - Generate effective search keywords — terms a recruiter would use to find this person.
 - Discover implicit preferences (e.g. if they only worked at startups, that is a preference).
-- For workRights, only set citizenship/visa fields if the resume or answers state them explicitly. Do NOT guess citizenship from work location. When unstated, use "unspecified" and an empty citizenship list.
+- For workRights, only add citizenship or a country rights entry if the resume or answers state it explicitly. Do NOT guess citizenship or work rights from work location. When unstated, leave both arrays empty.
 - Output ONLY the JSON object. No markdown, no explanation.`;

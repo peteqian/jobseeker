@@ -2,7 +2,10 @@ import type { ChatModelSelection } from "@jobseeker/contracts";
 import { CLAUDE_MODELS, CODEX_MODELS } from "@jobseeker/contracts";
 
 import { env } from "../../env";
-import { logError, logWarn } from "../../lib/log";
+import { logError, logInfo, logWarn } from "../../lib/log";
+import { ensureScopeDir } from "../../lib/paths";
+import { pickProviderAdapter } from "../../provider/layers/providerAdapterRegistry";
+import type { ProviderStreamEvent } from "../../provider/types";
 
 const CLAUDE_API_MODEL_MAP: Record<string, string> = {
   "claude-haiku-4-5": "claude-haiku-4-5-20251001",
@@ -25,6 +28,12 @@ export interface OneShotPromptOptions {
   maxTokens?: number;
   /** Short identifier used in error logs (e.g. "ats_analysis"). */
   label: string;
+  /**
+   * Optional live observer of the turn: reasoning, tool runs, and answer
+   * deltas as they stream. Uses the provider's event stream (codex) when
+   * available, else falls back to answer-text deltas.
+   */
+  onEvent?: (event: ProviderStreamEvent) => void;
 }
 
 /**
@@ -36,6 +45,15 @@ export interface OneShotPromptOptions {
  * tailoring.
  */
 export async function runOneShotPrompt(opts: OneShotPromptOptions): Promise<string | null> {
+  // Prefer the same configured provider the chat uses (codex / claude / opencode
+  // adapters, picked by availability + settings). This is what makes analyses
+  // work whenever chat works, instead of depending on a separate codex binary
+  // or ANTHROPIC_API_KEY.
+  const viaProvider = await callProviderAdapter(opts);
+  if (viaProvider !== null) return viaProvider;
+
+  // Legacy direct fallbacks, kept for environments where the adapter registry
+  // has no available provider but a raw codex binary / Anthropic key exists.
   const wantsCodex = !opts.modelSelection?.provider || opts.modelSelection.provider === "codex";
   const wantsClaude = !opts.modelSelection?.provider || opts.modelSelection.provider === "claude";
 
@@ -50,6 +68,100 @@ export async function runOneShotPrompt(opts: OneShotPromptOptions): Promise<stri
   }
 
   return null;
+}
+
+/**
+ * Runs the prompt through the configured provider adapter (the same machinery
+ * the chat uses). Returns null when no provider is available or the call fails,
+ * so the caller can fall back to a direct invocation.
+ */
+async function callProviderAdapter(opts: OneShotPromptOptions): Promise<string | null> {
+  const adapter = pickProviderAdapter(opts.modelSelection?.provider);
+  if (!adapter) {
+    logWarn("one-shot no provider available", {
+      label: opts.label,
+      requestedProvider: opts.modelSelection?.provider,
+    });
+    return null;
+  }
+
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const startedAt = Date.now();
+  logInfo("one-shot start", {
+    label: opts.label,
+    provider: adapter.provider,
+    promptChars: opts.prompt.length,
+    timeoutMs,
+  });
+  try {
+    // Run in a real working dir so codex doesn't stall on an ambiguous default.
+    // codex uses its single real home (settings.codex.homePath) for auth; no
+    // per-call home. A shared ephemeral scope is fine — one-shots are stateless.
+    const runtime = {
+      cwd: ensureScopeDir("one-shot", "coach"),
+    };
+    const messages = [{ role: "user", content: opts.prompt }];
+    // Prefer the event stream (reasoning + tool + answer deltas) when the
+    // caller wants live updates and the provider supports it (codex). Drive the
+    // stream to completion, forwarding each event, then take the final text.
+    const drive = async (): Promise<string> => {
+      if (opts.onEvent && adapter.runEvents) {
+        const turn = adapter.runEvents(
+          opts.systemPrompt ?? "",
+          messages,
+          opts.modelSelection,
+          runtime,
+          controller.signal,
+        );
+        for await (const event of turn) opts.onEvent(event);
+        return (await turn.result).text;
+      }
+      const turn = adapter.run(
+        opts.systemPrompt ?? "",
+        messages,
+        opts.modelSelection,
+        runtime,
+        controller.signal,
+      );
+      if (opts.onEvent) {
+        for await (const chunk of turn) opts.onEvent({ type: "message", text: chunk });
+      }
+      return (await turn.result).text;
+    };
+    // Some providers (notably the codex CLI) can ignore the abort signal and
+    // hang. Race against a hard timeout so the task fails fast instead of
+    // running forever.
+    const text = await Promise.race([
+      drive(),
+      new Promise<never>((_, reject) =>
+        setTimeout(
+          () => reject(new Error(`${opts.label} one-shot timed out after ${timeoutMs}ms`)),
+          timeoutMs,
+        ),
+      ),
+    ]);
+    const trimmed = text.trim();
+    logInfo("one-shot done", {
+      label: opts.label,
+      provider: adapter.provider,
+      ms: Date.now() - startedAt,
+      responseChars: trimmed.length,
+      empty: trimmed.length === 0,
+    });
+    return trimmed.length > 0 ? trimmed : null;
+  } catch (error) {
+    logError(`${opts.label} via provider failed`, {
+      provider: adapter.provider,
+      ms: Date.now() - startedAt,
+      aborted: controller.signal.aborted,
+      error,
+    });
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** Strips ```...``` fences (with optional language tag) from start/end of a response. */

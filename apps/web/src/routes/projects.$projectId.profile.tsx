@@ -150,7 +150,7 @@ function ProfilePage() {
   return (
     <>
       {shellHeaderActions}
-      <div className="h-full overflow-y-auto">
+      <div className="h-full min-h-0 overflow-hidden">
         <ProfileEditor
           ref={editorRef}
           projectId={project.project.id}

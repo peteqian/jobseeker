@@ -34,6 +34,20 @@ export function appendThreadToCache(
   );
 }
 
+export function removeThreadFromCache(
+  queryClient: QueryClient,
+  projectId: string,
+  scope: string,
+  threadId: string,
+) {
+  queryClient.setQueryData<ChatThread[]>(
+    chatKeys.threads(projectId, scope),
+    (prev) => prev?.filter((thread) => thread.id !== threadId) ?? prev,
+  );
+  queryClient.removeQueries({ queryKey: chatKeys.messages(threadId) });
+  queryClient.removeQueries({ queryKey: chatKeys.projection(threadId) });
+}
+
 export function patchThreadUpdatedAt(
   queryClient: QueryClient,
   projectId: string,

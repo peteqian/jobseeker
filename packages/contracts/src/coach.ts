@@ -74,6 +74,7 @@ export interface StartCoachReviewInput {
   deep?: boolean;
   pastedJds?: string[];
   useExplorer?: boolean;
+  modelSelection?: import("./model").ChatModelSelection;
 }
 
 export interface UpdateCoachNextStepInput {

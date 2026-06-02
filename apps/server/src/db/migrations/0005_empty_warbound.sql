@@ -1,0 +1,1 @@
+ALTER TABLE `explorer_configs` ADD `search_json` text;

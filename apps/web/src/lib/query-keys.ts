@@ -3,6 +3,7 @@ export const projectsKeys = {
   list: () => ["projects", "list"] as const,
   detail: (projectId: string) => ["projects", "detail", projectId] as const,
   resumeVersions: (projectId: string) => ["projects", projectId, "resume-versions"] as const,
+  resumeAnalyses: (projectId: string) => ["projects", projectId, "resume-analyses"] as const,
 };
 
 export const settingsKeys = {

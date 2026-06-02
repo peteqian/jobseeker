@@ -97,9 +97,14 @@ function mapUsage(usage: unknown): CodexUsage | undefined {
 }
 
 class SdkSession implements CodexSession {
-  private _threadId: string | null = null;
+  private _threadId: string | null;
 
-  constructor(private readonly thread: Thread) {}
+  constructor(
+    private readonly thread: Thread,
+    initialThreadId?: string,
+  ) {
+    this._threadId = initialThreadId ?? null;
+  }
 
   get threadId(): string | null {
     return this._threadId;
@@ -241,15 +246,20 @@ export class CodexSdkBackend implements CodexBackend {
       codexPathOverride: config.binaryPath,
       ...(env ? { env } : {}),
     });
-    const thread = sdk.startThread({
+    const threadOptions = {
       model: config.model,
       sandboxMode: config.sandboxMode ?? "read-only",
       workingDirectory: config.cwd,
       skipGitRepoCheck: config.skipGitRepoCheck ?? true,
       modelReasoningEffort: toCodexReasoningEffort(config.reasoningEffort),
       approvalPolicy: config.approvalPolicy ?? "never",
-    });
-    return new SdkSession(thread);
+    } as const;
+    // Resume the persisted thread (~/.codex/sessions) when an id is supplied,
+    // so codex keeps the conversation context server-side across turns.
+    const thread = config.resumeId
+      ? sdk.resumeThread(config.resumeId, threadOptions)
+      : sdk.startThread(threadOptions);
+    return new SdkSession(thread, config.resumeId);
   }
 }
 

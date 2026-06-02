@@ -40,6 +40,7 @@ const documentKindLabels: Record<ProjectDocumentKind, string> = {
   resume_source: "Resume Source",
   extracted_text: "Extracted Text",
   tailored_resume: "Tailored Resume",
+  cover_letter: "Cover Letter",
 };
 
 const documentKindOrder: ProjectDocumentKind[] = ["resume_source", "tailored_resume"];

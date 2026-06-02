@@ -1,57 +1,61 @@
 import { useEffect, useMemo, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import type { ChatModelSelection, ChatThread, ExplorerDomainConfig } from "@jobseeker/contracts";
+import { FileSearch, Plus, Square, X } from "lucide-react";
+import type {
+  ChatModelSelection,
+  ExplorerDomainConfig,
+  ExplorerSearchConfig,
+} from "@jobseeker/contracts";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetFooter,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
+import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ProviderModelPicker } from "@/components/chat/provider-model-picker";
 
 import { appendThreadToCache } from "@/lib/chat-cache";
 import { explorerThreadsQueryOptions, projectsListQueryOptions } from "@/lib/query-options";
 import {
-  getExplorerQuerySuggestions,
-  getExplorerStats,
-  parseDomainLines,
   createDomainConfig,
+  getExplorerStats,
+  getRoleSuggestions,
+  parseDomainLines,
   removeDomainConfig,
   upsertDomainConfig,
 } from "@/lib/explorer";
-import { useChat } from "@/hooks/use-chat";
 import { useModelChoice } from "@/hooks/use-model-choice";
-import { useDeleteJob, useSaveExplorer, useStartTask } from "@/hooks/use-project-mutations";
+import {
+  useContinueLogin,
+  useDeleteJob,
+  useInterruptTask,
+  useSaveExplorer,
+  useStartTask,
+} from "@/hooks/use-project-mutations";
 import { useProjectEvents } from "@/hooks/use-project-events";
+import { projectRouteId } from "@/lib/project-route";
 import { useShellHeaderMeta } from "@/providers/shell-header-context";
 import { useProjectStore } from "@/stores/project-store";
 import { createThread } from "@/rpc/chat-client";
 
-import { ConfigureRunTab } from "./projects.$projectId.explorer/-configure-run-tab";
-import { DomainConfigForm } from "./projects.$projectId.explorer/-domain-config-form";
+import { ExplorerLiveFeed } from "./projects.$projectId.explorer/-explorer-live-feed";
+import { ProfileSummaryCard } from "./projects.$projectId.explorer/-profile-summary-card";
 import { ResultsTab } from "./projects.$projectId.explorer/-results-tab";
-import { SessionTab } from "./projects.$projectId.explorer/-session-tab";
-import type {
-  ExplorerRunSession,
-  ExplorerRawLogLine,
-  ExplorerFeedItem,
-} from "./projects.$projectId.explorer/-explorer.types";
+import { SearchConfig } from "./projects.$projectId.explorer/-search-config";
+import {
+  latestExplorerTaskId,
+  toExplorerFeed,
+} from "./projects.$projectId.explorer/-components/explorer-feed";
 
-type ExplorerTab = "config" | "session" | "results";
+type ExplorerTab = "configure" | "results";
 
 interface ExplorerSearch {
   tab?: ExplorerTab;
   job?: string;
 }
 
-const VALID_TABS: readonly ExplorerTab[] = ["config", "session", "results"];
+const VALID_TABS: readonly ExplorerTab[] = ["configure", "results"];
 
 export const Route = createFileRoute("/projects/$projectId/explorer")({
   validateSearch: (search: Record<string, unknown>): ExplorerSearch => {
@@ -64,18 +68,19 @@ export const Route = createFileRoute("/projects/$projectId/explorer")({
   loader: async ({ context, params }) => {
     const projects = await context.queryClient.ensureQueryData(projectsListQueryOptions());
     const project = projects.find((entry) => entry.project.slug === params.projectId);
-
-    if (!project) {
-      return;
-    }
-
+    if (!project) return;
     await context.queryClient.ensureQueryData(explorerThreadsQueryOptions(project.project.id));
   },
   component: ExplorerPage,
 });
 
-const EMPTY_THREADS: ChatThread[] = [];
 const EMPTY_DOMAINS: ExplorerDomainConfig[] = [];
+const DEFAULT_SEARCH: ExplorerSearchConfig = {
+  roles: [],
+  freshness: "week",
+  jobLimit: 25,
+  runMode: "sequential",
+};
 
 function ExplorerPage() {
   const project = useProjectStore((state) => state.currentProject);
@@ -84,89 +89,87 @@ function ExplorerPage() {
   const events = useProjectEvents(projectId);
 
   const startTaskMutation = useStartTask();
+  const interruptTaskMutation = useInterruptTask();
   const saveExplorerMutation = useSaveExplorer();
   const deleteJobMutation = useDeleteJob();
+  const continueLoginMutation = useContinueLogin();
 
-  const busyAction = startTaskMutation.isPending
-    ? "explorer-discovery"
-    : saveExplorerMutation.isPending
-      ? "save-explorer"
-      : deleteJobMutation.isPending
-        ? "delete-job"
-        : null;
+  const runningExplorerTask = useMemo(() => {
+    const running =
+      project?.tasks.filter(
+        (task) => task.type === "explorer_discovery" && task.status === "running",
+      ) ?? [];
+    return [...running].sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    )[0];
+  }, [project?.tasks]);
+  const isExplorerRunning = Boolean(runningExplorerTask) || startTaskMutation.isPending;
+
   const {
     providers: explorerProviders,
     selection: explorerSelection,
     setSelection: setExplorerSelection,
     providersLoading: explorerProvidersLoading,
   } = useModelChoice(projectId, "explorer");
-  const hasProfile = Boolean(project?.profile);
+
   const savedDomains = project?.explorer.domains ?? EMPTY_DOMAINS;
+  const savedSearch = project?.explorer.search ?? DEFAULT_SEARCH;
   const savedIncludeAgentSuggestions = project?.explorer.includeAgentSuggestions ?? false;
-  const threads = useQuery(explorerThreadsQueryOptions(projectId)).data ?? EMPTY_THREADS;
 
   const [draftDomains, setDraftDomains] = useState<ExplorerDomainConfig[]>(savedDomains);
-  const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
+  const [draftSearch, setDraftSearch] = useState<ExplorerSearchConfig>(savedSearch);
   const [draftIncludeAgent, setDraftIncludeAgent] = useState(savedIncludeAgentSuggestions);
   const [addDomainInput, setAddDomainInput] = useState("");
-  const [sorting, setSorting] = useState<import("@tanstack/react-table").SortingState>([
-    { id: "domain", desc: false },
-  ]);
-  const [editingDomain, setEditingDomain] = useState<string | null>(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
 
-  useEffect(() => {
-    setDraftDomains(savedDomains);
-  }, [savedDomains]);
-
-  useEffect(() => {
-    setDraftIncludeAgent(savedIncludeAgentSuggestions);
-  }, [savedIncludeAgentSuggestions]);
-
-  useEffect(() => {
-    const runThreads = threads.filter((thread) => thread.title.startsWith("Run "));
-    const latestRun = [...runThreads].sort(
-      (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
-    )[0];
-    setActiveThreadId((current) => current ?? latestRun?.id ?? threads[0]?.id ?? null);
-  }, [threads]);
+  useEffect(() => setDraftDomains(savedDomains), [savedDomains]);
+  useEffect(() => setDraftSearch(savedSearch), [savedSearch]);
+  useEffect(
+    () => setDraftIncludeAgent(savedIncludeAgentSuggestions),
+    [savedIncludeAgentSuggestions],
+  );
 
   const shellHeader = useMemo(
     () => ({
       title: "Explorer",
-      description: "Configure search scope and review the roles discovered for this project.",
+      description: "Configure a search, run the crawl, and review discovered roles.",
     }),
     [],
   );
   useShellHeaderMeta(shellHeader);
 
-  const querySuggestions = useMemo(
-    () => getExplorerQuerySuggestions(project?.profile ?? null),
+  const stats = useMemo(() => getExplorerStats(draftDomains), [draftDomains]);
+  const roleSuggestions = useMemo(
+    () => getRoleSuggestions(project?.profile ?? null),
     [project?.profile],
   );
-
-  const stats = useMemo(() => getExplorerStats(draftDomains), [draftDomains]);
-  const runSessions = useMemo(() => buildExplorerRunSessions(threads, events), [threads, events]);
+  // The live banner and feed follow the running task; once it finishes we fall
+  // back to the newest explorer task.started in the event stream so the last
+  // run's activity stays visible.
   const activeRunTaskId = useMemo(
-    () => runSessions.find((session) => session.threadId === activeThreadId)?.taskId ?? null,
-    [runSessions, activeThreadId],
+    () => runningExplorerTask?.id ?? latestExplorerTaskId(events),
+    [runningExplorerTask?.id, events],
   );
-  const runHistory = useMemo(() => runSessions.map((session) => session.thread), [runSessions]);
-  const latestRunThreadId = useMemo(() => {
-    const runThreads = threads.filter((thread) => thread.title.startsWith("Run "));
-    const latest = [...runThreads].sort(
-      (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
-    )[0];
-    return latest?.id ?? null;
-  }, [threads]);
   const liveFeed = useMemo(
     () => toExplorerFeed(events, activeRunTaskId),
     [events, activeRunTaskId],
   );
-  const rawLogs = useMemo(
-    () => toExplorerRawLogs(events, activeRunTaskId),
-    [events, activeRunTaskId],
-  );
+
+  // The run is paused on a sign-in wall when the latest progress event for the
+  // active run is "awaiting_login". It clears as soon as the agent emits a
+  // newer event (i.e. after the user continues and crawling resumes).
+  const awaitingLogin = useMemo(() => {
+    if (!activeRunTaskId) return null;
+    let latest: Record<string, unknown> | null = null;
+    for (const event of events) {
+      if (event.type !== "task.progress") continue;
+      const payload = event.payload as Record<string, unknown>;
+      if (payload.taskId !== activeRunTaskId || payload.taskType !== "explorer_discovery") continue;
+      latest = payload;
+    }
+    if (latest?.phase !== "awaiting_login") return null;
+    return typeof latest.message === "string" ? latest.message : "Sign-in required.";
+  }, [events, activeRunTaskId]);
+
   const explorerModelProviders = useMemo(
     () => explorerProviders.filter((provider) => provider.id === "codex"),
     [explorerProviders],
@@ -174,9 +177,7 @@ function ExplorerPage() {
   const fallbackExplorerSelection = useMemo(() => {
     const codex = explorerModelProviders.find((provider) => provider.available);
     const model = codex?.models[0];
-    if (!codex || !model) {
-      return undefined;
-    }
+    if (!codex || !model) return undefined;
     return {
       provider: codex.id,
       model: model.slug,
@@ -187,47 +188,34 @@ function ExplorerPage() {
     explorerSelection?.provider === "codex" ? explorerSelection : fallbackExplorerSelection;
 
   useEffect(() => {
-    if (!fallbackExplorerSelection || explorerSelection?.provider === "codex") {
-      return;
-    }
+    if (!fallbackExplorerSelection || explorerSelection?.provider === "codex") return;
     setExplorerSelection(fallbackExplorerSelection);
   }, [explorerSelection?.provider, fallbackExplorerSelection, setExplorerSelection]);
-
-  const {
-    messages: debugMessages,
-    streamingContent: debugStreamingContent,
-    isStreaming: debugIsStreaming,
-    error: debugError,
-    send: sendDebugMessage,
-    interrupt: interruptDebugMessage,
-  } = useChat({
-    projectId,
-    threadId: activeThreadId ?? "",
-    selection: effectiveExplorerSelection,
-  });
 
   const isDirty = useMemo(
     () =>
       JSON.stringify(draftDomains) !== JSON.stringify(savedDomains) ||
+      JSON.stringify(draftSearch) !== JSON.stringify(savedSearch) ||
       draftIncludeAgent !== savedIncludeAgentSuggestions,
-    [draftDomains, draftIncludeAgent, savedDomains, savedIncludeAgentSuggestions],
-  );
-
-  const editingConfig = useMemo(
-    () =>
-      editingDomain ? (draftDomains.find((entry) => entry.domain === editingDomain) ?? null) : null,
-    [draftDomains, editingDomain],
+    [
+      draftDomains,
+      draftSearch,
+      draftIncludeAgent,
+      savedDomains,
+      savedSearch,
+      savedIncludeAgentSuggestions,
+    ],
   );
 
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
-  const activeTab = search.tab ?? "config";
+  const activeTab = search.tab ?? "configure";
   const selectedJobId = search.job ?? null;
 
   const handleTabChange = (next: string) => {
     const tab: ExplorerTab = VALID_TABS.includes(next as ExplorerTab)
       ? (next as ExplorerTab)
-      : "config";
+      : "configure";
     void navigate({
       search: (prev) => ({ ...prev, tab, job: tab === "results" ? prev.job : undefined }),
       replace: true,
@@ -235,9 +223,7 @@ function ExplorerPage() {
   };
 
   const handleSelectJob = (jobId: string | null) => {
-    void navigate({
-      search: (prev) => ({ ...prev, job: jobId ?? undefined }),
-    });
+    void navigate({ search: (prev) => ({ ...prev, job: jobId ?? undefined }) });
   };
 
   if (!project) {
@@ -251,34 +237,12 @@ function ExplorerPage() {
   function handleAddDomain() {
     const parsed = parseDomainLines(addDomainInput);
     if (parsed.length === 0) return;
-
     const existing = new Set(draftDomains.map((entry) => entry.domain.toLowerCase()));
     const additions = parsed
       .filter((domain) => !existing.has(domain.toLowerCase()))
       .map((domain) => createDomainConfig(domain));
-
-    if (additions.length === 0) {
-      setAddDomainInput("");
-      return;
-    }
-
-    setDraftDomains((current) => [...current, ...additions]);
+    if (additions.length > 0) setDraftDomains((current) => [...current, ...additions]);
     setAddDomainInput("");
-  }
-
-  function handleToggleEnabled(domain: ExplorerDomainConfig, enabled: boolean) {
-    setDraftDomains((current) => upsertDomainConfig(current, { ...domain, enabled }));
-  }
-
-  function handleUpdateDomain(next: ExplorerDomainConfig) {
-    setDraftDomains((current) => upsertDomainConfig(current, next));
-  }
-
-  function handleRemoveDomain(domain: string) {
-    setDraftDomains((current) => removeDomainConfig(current, domain));
-    if (editingDomain === domain) {
-      setEditingDomain(null);
-    }
   }
 
   async function persistDraft() {
@@ -286,24 +250,20 @@ function ExplorerPage() {
       projectId,
       input: {
         domains: draftDomains,
+        search: draftSearch,
         includeAgentSuggestions: draftIncludeAgent,
       },
     });
   }
 
   async function handleRunExplorer() {
-    if (isDirty) {
-      await persistDraft();
-    }
-
+    if (isDirty) await persistDraft();
     const runThread = await createThread(
       projectId,
       "explorer",
       `Run ${new Date().toLocaleString()}`,
     );
     appendThreadToCache(queryClient, projectId, "explorer", runThread);
-    setActiveThreadId(runThread.id);
-
     await startTaskMutation.mutateAsync({
       projectId,
       type: "explorer_discovery",
@@ -311,27 +271,28 @@ function ExplorerPage() {
     });
   }
 
-  function resetDraftFromSaved() {
-    setDraftDomains(savedDomains);
-    setDraftIncludeAgent(savedIncludeAgentSuggestions);
+  async function handleStopExplorerRun() {
+    if (!runningExplorerTask) return;
+    await interruptTaskMutation.mutateAsync(runningExplorerTask.id);
   }
 
+  const canRun =
+    Boolean(project.profile) &&
+    Boolean(effectiveExplorerSelection) &&
+    stats.enabledCount > 0 &&
+    draftSearch.roles.length > 0 &&
+    !isExplorerRunning;
+
   return (
-    <div className="flex h-full min-h-0 flex-col space-y-4">
+    <div className="flex h-full min-h-0 flex-col">
       <Tabs
         value={activeTab}
         onValueChange={handleTabChange}
         className="flex min-h-0 flex-1 flex-col"
       >
-        <div className="mb-4 flex items-center justify-between">
+        <div className="mb-4 flex items-center justify-between gap-3">
           <TabsList>
-            <TabsTrigger value="config">Configure & Run</TabsTrigger>
-            <TabsTrigger value="session">
-              Session
-              {busyAction === "explorer-discovery" ? (
-                <span className="ml-2 inline-block size-2 animate-pulse rounded-full bg-emerald-500" />
-              ) : null}
-            </TabsTrigger>
+            <TabsTrigger value="configure">Configure & Run</TabsTrigger>
             <TabsTrigger value="results">
               Results
               {project.jobs.length > 0 ? (
@@ -341,60 +302,164 @@ function ExplorerPage() {
               ) : null}
             </TabsTrigger>
           </TabsList>
+
+          <div className="flex items-center gap-2">
+            <ProviderModelPicker
+              providers={explorerModelProviders}
+              selection={effectiveExplorerSelection}
+              disabled={explorerProvidersLoading || isExplorerRunning}
+              onSelectionChange={setExplorerSelection}
+            />
+            {isDirty && !isExplorerRunning ? (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => void persistDraft()}
+                disabled={saveExplorerMutation.isPending}
+              >
+                {saveExplorerMutation.isPending ? "Saving…" : "Save"}
+              </Button>
+            ) : null}
+            {runningExplorerTask ? (
+              <Button
+                size="sm"
+                variant="destructive"
+                onClick={() => void handleStopExplorerRun()}
+                disabled={interruptTaskMutation.isPending}
+              >
+                <Square className="size-4" />
+                {interruptTaskMutation.isPending ? "Stopping…" : "Stop run"}
+              </Button>
+            ) : (
+              <Button size="sm" onClick={() => void handleRunExplorer()} disabled={!canRun}>
+                <FileSearch className="size-4" />
+                {isExplorerRunning ? "Exploring…" : "Run explorer"}
+              </Button>
+            )}
+          </div>
         </div>
 
-        <TabsContent value="config" className="m-0 min-h-0 flex-1 overflow-hidden">
-          <ConfigureRunTab
-            domains={draftDomains}
-            stats={stats}
-            addDomainInput={addDomainInput}
-            setAddDomainInput={setAddDomainInput}
-            onAddDomain={handleAddDomain}
-            onToggleEnabled={handleToggleEnabled}
-            onEditDomain={setEditingDomain}
-            sorting={sorting}
-            setSorting={setSorting}
-            includeAgentSuggestions={draftIncludeAgent}
-            modelProviders={explorerModelProviders}
-            modelSelection={effectiveExplorerSelection}
-            modelProvidersLoading={explorerProvidersLoading}
-            isDirty={isDirty}
-            busyAction={busyAction}
-            hasProfile={hasProfile}
-            hasExplorerModel={Boolean(effectiveExplorerSelection)}
-            onModelSelectionChange={setExplorerSelection}
-            onSave={() => void persistDraft()}
-            onRun={() => void handleRunExplorer()}
-            onDiscard={resetDraftFromSaved}
-            onOpenSettings={() => setSettingsOpen(true)}
-            sessions={runHistory}
-            activeThreadId={activeThreadId}
-            onSelectSession={setActiveThreadId}
-            logs={rawLogs}
-            feed={liveFeed}
-            isRunning={busyAction === "explorer-discovery"}
-          />
-        </TabsContent>
+        {awaitingLogin ? (
+          <div className="mb-4 flex items-center gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3">
+            <span className="size-2 shrink-0 animate-pulse rounded-full bg-amber-500" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium">Sign-in required</p>
+              <p className="truncate text-xs text-muted-foreground">{awaitingLogin}</p>
+            </div>
+            <Button
+              size="sm"
+              onClick={() => activeRunTaskId && continueLoginMutation.mutate(activeRunTaskId)}
+              disabled={continueLoginMutation.isPending || !activeRunTaskId}
+            >
+              {continueLoginMutation.isPending ? "Continuing…" : "I've signed in — Continue"}
+            </Button>
+          </div>
+        ) : null}
 
-        <TabsContent value="session" className="m-0 min-h-0 flex-1 overflow-hidden">
-          <SessionTab
-            activeThreadId={activeThreadId}
-            latestRunThreadId={latestRunThreadId}
-            onSelectLatestRun={() => {
-              if (latestRunThreadId) setActiveThreadId(latestRunThreadId);
-            }}
-            logs={rawLogs}
-            isRunning={busyAction === "explorer-discovery"}
-            debugProviders={explorerModelProviders}
-            debugSelection={effectiveExplorerSelection}
-            onDebugSelectionChange={setExplorerSelection}
-            debugMessages={debugMessages}
-            debugStreamingContent={debugStreamingContent}
-            debugIsStreaming={debugIsStreaming}
-            debugError={debugError}
-            onSendDebugMessage={sendDebugMessage}
-            onInterruptDebugMessage={interruptDebugMessage}
-          />
+        <TabsContent value="configure" className="m-0 min-h-0 flex-1 overflow-hidden">
+          <div className="grid h-full min-h-0 gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+            {/* Search */}
+            <section className="min-h-0 overflow-y-auto rounded-lg border bg-card p-5 shadow-sm">
+              <SearchConfig
+                search={draftSearch}
+                onChange={setDraftSearch}
+                roleSuggestions={roleSuggestions}
+              />
+
+              <div className="mt-6 space-y-2">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-medium">Domains</p>
+                  <p className="text-xs text-muted-foreground">
+                    {stats.enabledCount} of {stats.domainCount} enabled
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <Input
+                    value={addDomainInput}
+                    onChange={(e) => setAddDomainInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        handleAddDomain();
+                      }
+                    }}
+                    placeholder="Add domain (e.g. seek.com.au)"
+                  />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleAddDomain}
+                    disabled={!addDomainInput.trim()}
+                  >
+                    <Plus className="size-4" />
+                    Add
+                  </Button>
+                </div>
+                {draftDomains.length > 0 ? (
+                  <ul className="divide-y rounded-md border">
+                    {draftDomains.map((domain) => (
+                      <li key={domain.domain} className="flex items-center gap-3 px-3 py-2">
+                        <Switch
+                          checked={domain.enabled}
+                          onCheckedChange={(value) =>
+                            setDraftDomains((current) =>
+                              upsertDomainConfig(current, { ...domain, enabled: value }),
+                            )
+                          }
+                        />
+                        <span
+                          className={
+                            domain.enabled
+                              ? "flex-1 text-sm font-medium"
+                              : "flex-1 text-sm font-medium text-muted-foreground"
+                          }
+                        >
+                          {domain.domain}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setDraftDomains((current) => removeDomainConfig(current, domain.domain))
+                          }
+                          aria-label={`Remove ${domain.domain}`}
+                          className="rounded-sm p-1 text-muted-foreground hover:bg-muted"
+                        >
+                          <X className="size-4" />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="rounded-md border border-dashed px-3 py-4 text-center text-xs text-muted-foreground">
+                    No domains yet. Add a job board above.
+                  </p>
+                )}
+                <label className="flex items-center gap-2 pt-1 text-xs text-muted-foreground">
+                  <Switch checked={draftIncludeAgent} onCheckedChange={setDraftIncludeAgent} />
+                  Let the agent suggest extra job-board domains during a run
+                </label>
+              </div>
+            </section>
+
+            {/* Activity + profile — activity leads so the live run is the focus */}
+            <section className="flex min-h-0 flex-col gap-4 overflow-y-auto">
+              <div className="flex min-h-0 flex-1 flex-col rounded-lg border bg-card shadow-sm">
+                <div className="flex items-center justify-between border-b px-4 py-3">
+                  <p className="text-sm font-medium">Activity</p>
+                  {isExplorerRunning ? (
+                    <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <span className="size-2 animate-pulse rounded-full bg-emerald-500" />
+                      Running
+                    </span>
+                  ) : null}
+                </div>
+                <div className="min-h-0 flex-1 overflow-y-auto p-3">
+                  <ExplorerLiveFeed items={liveFeed} isRunning={isExplorerRunning} />
+                </div>
+              </div>
+              <ProfileSummaryCard projectSlug={projectRouteId(project)} profile={project.profile} />
+            </section>
+          </div>
         </TabsContent>
 
         <TabsContent value="results" className="m-0 min-h-0 flex-1 overflow-hidden">
@@ -406,304 +471,25 @@ function ExplorerPage() {
             documents={project.documents}
             selectedJobId={selectedJobId}
             onSelectJob={handleSelectJob}
-            onDeleteJob={(projectId, jobId) =>
-              void deleteJobMutation.mutateAsync({ projectId, jobId })
+            onDeleteJob={(pid, jobId) =>
+              deleteJobMutation.mutateAsync({ projectId: pid, jobId }).then(() => undefined)
             }
             onGenerate={(jobId, type) =>
+              void startTaskMutation.mutateAsync({ projectId, type, jobId })
+            }
+            onApply={(job) =>
               void startTaskMutation.mutateAsync({
                 projectId,
-                type,
-                jobId,
+                type: "apply_job",
+                input: job.url,
+                jobId: job.id,
+                modelSelection: effectiveExplorerSelection,
               })
             }
-            busyAction={busyAction}
+            busyAction={isExplorerRunning ? "explorer-discovery" : null}
           />
         </TabsContent>
-
-        <Sheet
-          open={editingConfig !== null}
-          onOpenChange={(open) => {
-            if (!open) setEditingDomain(null);
-          }}
-        >
-          <SheetContent side="right" className="flex w-full flex-col p-0 sm:max-w-md">
-            {editingConfig ? (
-              <DomainConfigForm
-                config={editingConfig}
-                suggestions={querySuggestions}
-                onChange={handleUpdateDomain}
-                onRemove={() => handleRemoveDomain(editingConfig.domain)}
-                onClose={() => setEditingDomain(null)}
-              />
-            ) : null}
-          </SheetContent>
-        </Sheet>
-
-        <Sheet open={settingsOpen} onOpenChange={setSettingsOpen}>
-          <SheetContent side="right" className="flex w-full flex-col p-0 sm:max-w-md">
-            <SheetHeader className="border-b px-6 py-4">
-              <SheetTitle>Explorer settings</SheetTitle>
-              <SheetDescription>Global defaults for discovery runs.</SheetDescription>
-            </SheetHeader>
-            <div className="flex-1 space-y-5 overflow-y-auto px-6 py-5">
-              <label className="flex items-start gap-3 rounded-md border px-4 py-3">
-                <Switch
-                  checked={draftIncludeAgent}
-                  onCheckedChange={(value) => setDraftIncludeAgent(value)}
-                />
-                <div className="space-y-1">
-                  <div className="text-sm font-medium">Agent domain suggestions</div>
-                  <p className="text-xs text-muted-foreground">
-                    Let the agent append additional job-board domains it discovers during a run.
-                  </p>
-                </div>
-              </label>
-            </div>
-            <SheetFooter className="border-t px-6 py-4">
-              <Button variant="outline" onClick={() => setSettingsOpen(false)}>
-                Close
-              </Button>
-            </SheetFooter>
-          </SheetContent>
-        </Sheet>
       </Tabs>
     </div>
   );
-}
-
-function buildExplorerRunSessions(
-  threads: ChatThread[],
-  events: import("@jobseeker/contracts").RuntimeEvent[],
-): ExplorerRunSession[] {
-  const runThreads = [...threads]
-    .filter((thread) => thread.title.startsWith("Run "))
-    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
-
-  const startedRuns = events
-    .filter((event) => event.type === "task.started")
-    .flatMap((event) => {
-      const payload = event.payload as Record<string, unknown>;
-      const taskType = typeof payload.taskType === "string" ? payload.taskType : null;
-      const taskId = typeof payload.taskId === "string" ? payload.taskId : null;
-      if (taskType !== "explorer_discovery" || !taskId) {
-        return [];
-      }
-      return [{ taskId, createdAt: event.createdAt }] as const;
-    })
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-
-  return runThreads.map((thread, index) => ({
-    thread,
-    threadId: thread.id,
-    taskId: startedRuns[index]?.taskId ?? null,
-  }));
-}
-
-function toExplorerFeed(
-  events: import("@jobseeker/contracts").RuntimeEvent[],
-  taskId: string | null,
-): ExplorerFeedItem[] {
-  if (!taskId) {
-    return [];
-  }
-
-  const filtered: ExplorerFeedItem[] = [];
-
-  for (const event of events) {
-    const payload = event.payload as Record<string, unknown>;
-    const eventTaskId = typeof payload.taskId === "string" ? payload.taskId : null;
-    if (eventTaskId !== taskId) {
-      continue;
-    }
-
-    const taskType = typeof payload.taskType === "string" ? payload.taskType : null;
-    const isExplorerTaskEvent =
-      (event.type === "task.progress" && taskType === "explorer_discovery") ||
-      ((event.type === "task.started" ||
-        event.type === "task.completed" ||
-        event.type === "task.failed") &&
-        taskType === "explorer_discovery");
-
-    if (!isExplorerTaskEvent && event.type !== "jobs.updated") {
-      continue;
-    }
-
-    if (event.type === "task.started") {
-      filtered.push({
-        id: event.id,
-        createdAt: event.createdAt,
-        tone: "info",
-        label: "Explorer run started",
-      });
-      continue;
-    }
-
-    if (event.type === "task.failed") {
-      const detail = typeof payload.error === "string" ? payload.error : "Unknown task failure.";
-      filtered.push({
-        id: event.id,
-        createdAt: event.createdAt,
-        tone: "error",
-        label: "Explorer run failed",
-        detail,
-      });
-      continue;
-    }
-
-    if (event.type === "task.completed") {
-      filtered.push({
-        id: event.id,
-        createdAt: event.createdAt,
-        tone: "success",
-        label: "Explorer run completed",
-      });
-      continue;
-    }
-
-    if (event.type === "jobs.updated") {
-      const jobsCreated = typeof payload.jobsCreated === "number" ? payload.jobsCreated : 0;
-      const domainsProcessed =
-        typeof payload.domainsProcessed === "number" ? payload.domainsProcessed : 0;
-      const queriesRun = typeof payload.queriesRun === "number" ? payload.queriesRun : 0;
-      filtered.push({
-        id: event.id,
-        createdAt: event.createdAt,
-        tone: "success",
-        label: `Saved ${jobsCreated} jobs`,
-        detail: `${domainsProcessed} domains, ${queriesRun} queries`,
-      });
-      continue;
-    }
-
-    if (event.type !== "task.progress") {
-      continue;
-    }
-
-    const phase = typeof payload.phase === "string" ? payload.phase : "";
-    const domain = typeof payload.domain === "string" ? payload.domain : "unknown domain";
-    const query = typeof payload.query === "string" ? payload.query : "query";
-    const currentQuery = typeof payload.currentQuery === "number" ? payload.currentQuery : 0;
-    const totalQueries = typeof payload.totalQueries === "number" ? payload.totalQueries : 0;
-    const jobsFound = typeof payload.jobsFound === "number" ? payload.jobsFound : null;
-    const progressText =
-      currentQuery > 0 && totalQueries > 0 ? `${currentQuery}/${totalQueries}` : "in progress";
-
-    if (phase === "query_started") {
-      filtered.push({
-        id: event.id,
-        createdAt: event.createdAt,
-        tone: "info",
-        label: `Searching ${domain}`,
-        detail: `${progressText} · ${query}`,
-      });
-      continue;
-    }
-
-    if (phase === "query_finished") {
-      filtered.push({
-        id: event.id,
-        createdAt: event.createdAt,
-        tone: "success",
-        label: `Finished ${domain}`,
-        detail: `${progressText} · ${query} · ${jobsFound ?? 0} jobs`,
-      });
-      continue;
-    }
-
-    if (phase === "job_found") {
-      const job = (payload.job ?? {}) as Record<string, unknown>;
-      const title = typeof job.title === "string" ? job.title : "Untitled";
-      const company = typeof job.company === "string" ? job.company : "Unknown company";
-      const score = typeof payload.score === "number" ? payload.score : null;
-      const scoreText = score !== null ? ` · score ${Math.round(score * 100)}` : "";
-      filtered.push({
-        id: event.id,
-        createdAt: event.createdAt,
-        tone: "success",
-        label: `Saved ${title}`,
-        detail: `${company} · ${domain}${scoreText}`,
-      });
-    }
-  }
-
-  return filtered.slice(0, 40).reverse();
-}
-
-function toExplorerRawLogs(
-  events: import("@jobseeker/contracts").RuntimeEvent[],
-  taskId: string | null,
-): ExplorerRawLogLine[] {
-  if (!taskId) {
-    return [];
-  }
-
-  const out: ExplorerRawLogLine[] = [];
-
-  for (const event of events) {
-    if (event.type !== "task.progress") {
-      continue;
-    }
-
-    const payload = event.payload as Record<string, unknown>;
-    const eventTaskId = typeof payload.taskId === "string" ? payload.taskId : null;
-    const taskType = typeof payload.taskType === "string" ? payload.taskType : null;
-    if (eventTaskId !== taskId || taskType !== "explorer_discovery") {
-      continue;
-    }
-
-    const phase = typeof payload.phase === "string" ? payload.phase : "";
-    const domain = typeof payload.domain === "string" ? payload.domain : "unknown-domain";
-    const query = typeof payload.query === "string" ? payload.query : "query";
-    const step = typeof payload.step === "number" ? payload.step : null;
-    const model = typeof payload.model === "string" ? payload.model : "unknown-model";
-    const effort = typeof payload.effort === "string" ? payload.effort : "unknown-effort";
-    const retry = payload.retry === true ? " retry" : "";
-
-    if (phase === "query_started") {
-      out.push({
-        id: event.id,
-        createdAt: event.createdAt,
-        text: `[query_started] ${domain} | ${query}\nmodel=${model} effort=${effort}`,
-      });
-      continue;
-    }
-
-    if (phase === "codex_raw") {
-      const raw = typeof payload.raw === "string" ? payload.raw : "";
-      if (!raw) continue;
-      out.push({
-        id: event.id,
-        createdAt: event.createdAt,
-        text: `[codex_raw${retry}] ${domain} | ${query} | step ${step ?? "?"}\n${raw}`,
-      });
-      continue;
-    }
-
-    if (phase === "crawl_step") {
-      const action = typeof payload.action === "string" ? payload.action : "unknown_action";
-      const ok = payload.ok === true ? "ok" : "fail";
-      const result = typeof payload.result === "string" ? payload.result : "";
-      const params = payload.params;
-      const paramsText = params ? JSON.stringify(params) : "{}";
-      out.push({
-        id: event.id,
-        createdAt: event.createdAt,
-        text: `[crawl_step${retry}] ${domain} | ${query} | step ${step ?? "?"} | ${action} | ${ok}\nparams=${paramsText}\nresult=${result}`,
-      });
-      continue;
-    }
-
-    if (phase === "codex_event") {
-      const eventKind = typeof payload.eventKind === "string" ? payload.eventKind : "event";
-      const eventText = typeof payload.eventText === "string" ? payload.eventText : "";
-      if (!eventText) continue;
-      out.push({
-        id: event.id,
-        createdAt: event.createdAt,
-        text: `[codex.${eventKind}${retry}] ${domain} | ${query} | step ${step ?? "?"}\n${eventText}`,
-      });
-    }
-  }
-
-  return out.slice(0, 120).reverse();
 }

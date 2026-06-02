@@ -33,6 +33,14 @@ export interface ChatModelSelection {
 
 export const CODEX_MODELS: ProviderModel[] = [
   {
+    slug: "gpt-5.5",
+    name: "GPT-5.5",
+    capabilities: {
+      reasoningEffort: ["low", "medium", "high"],
+      defaultEffort: "medium",
+    },
+  },
+  {
     slug: "gpt-5.4",
     name: "GPT-5.4",
     capabilities: {

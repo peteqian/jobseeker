@@ -9,6 +9,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 
 interface RunDeepReviewModalProps {
@@ -65,10 +66,10 @@ export function RunDeepReviewModal({
           </div>
 
           <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
+            <Switch
               checked={useExplorer}
-              onChange={(event) => setUseExplorer(event.target.checked)}
+              onCheckedChange={(checked) => setUseExplorer(Boolean(checked))}
+              aria-label="Also use jobs from this project's explorer"
             />
             Also use jobs from this project&apos;s explorer (top 5)
           </label>
