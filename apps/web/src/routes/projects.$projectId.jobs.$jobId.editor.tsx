@@ -209,8 +209,12 @@ function JobEditorPage() {
             size="sm"
             variant="outline"
             onClick={handleRerunReview}
-            disabled={!doc || isGenerating || startTask.isPending}
-            title="Re-run the recruiter review on the saved document"
+            disabled={!doc || dirty || isGenerating || startTask.isPending}
+            title={
+              dirty
+                ? "Save your edits first — the review runs on the saved document"
+                : "Re-run the recruiter review on the saved document"
+            }
           >
             Re-run review
           </Button>
