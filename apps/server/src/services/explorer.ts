@@ -8,7 +8,12 @@ import { logInfo, logWarn } from "../lib/log";
 import { createProjectSlug } from "../lib/paths";
 import { getProviderSettings } from "../lib/provider-settings";
 import { readExplorerConfig, readExplorerProfile } from "./explorer/config";
-import { deleteOldExplorerJobs, saveDiscoveredJob } from "./explorer/persist";
+import {
+  deleteOldExplorerJobs,
+  normalizeAbsoluteUrl,
+  saveDiscoveredJob,
+  setJobDescription,
+} from "./explorer/persist";
 import { getEnabledDomains, getSearchQueries, type QuerySource } from "./explorer/queryPlanning";
 import { findJobsForQuery, isAbortLikeError } from "./explorer/runtime";
 import type { ExplorerProgress, ExplorerRunOptions } from "./explorer/types";
@@ -126,6 +131,9 @@ export async function runExplorerDiscovery(
   // New jobs collected during the crawl, matched in a single pass afterwards so
   // the crawl stays fast and the costly full-JD reads run with bounded fan-out.
   const newJobs: MatchPassJob[] = [];
+  // Normalized job URL -> inserted jobId, so the crawl's JD-text callback can
+  // cache the description on the right row.
+  const urlToJobId = new Map<string, string>();
   let jobsCreated = 0;
   const totalQueries = plannedRuns.length;
   // Sequential (the default) runs one browser at a time; parallel fans out up
@@ -182,9 +190,9 @@ export async function runExplorerDiscovery(
       if (controller.signal.aborted) return;
       const result = await saveDiscoveredJob({ projectId, job, seenUrls });
       if (!result) return;
+      urlToJobId.set(result.url, result.jobId);
       newJobs.push({
         jobId: result.jobId,
-        url: result.url,
         title: job.title,
         company: job.company,
         location: job.location,
@@ -222,6 +230,11 @@ export async function runExplorerDiscovery(
         signal: controller.signal,
         onProgress: handleProgress,
         onFoundJob: persistFound,
+        onJobDescription: async (rawUrl, text) => {
+          const normalized = normalizeAbsoluteUrl(rawUrl);
+          const jobId = normalized ? urlToJobId.get(normalized) : undefined;
+          if (jobId) await setJobDescription(jobId, text);
+        },
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

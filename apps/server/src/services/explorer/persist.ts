@@ -101,8 +101,13 @@ export async function saveDiscoveredJob(input: {
   return { jobId: resolvedJobId, url: normalizedUrl };
 }
 
+/** Caches the full job-description text on a discovered job row. */
+export async function setJobDescription(jobId: string, text: string): Promise<void> {
+  await db.update(jobs).set({ descriptionText: text }).where(eq(jobs.id, jobId)).run();
+}
+
 /** Normalizes only absolute URLs; relative or malformed URLs are discarded. */
-function normalizeAbsoluteUrl(input: string): string | null {
+export function normalizeAbsoluteUrl(input: string): string | null {
   const value = input.trim();
   if (!value) return null;
   try {

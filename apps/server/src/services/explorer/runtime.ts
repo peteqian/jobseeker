@@ -29,6 +29,7 @@ import {
   savePageMemory,
 } from "./memory";
 import { buildAgentTask, clipRawCodexOutput, summarizeStepParams, toDomainUrl } from "./prompting";
+import { fetchJobDescription } from "../match/fetchJobDescription";
 import { replayTrajectory } from "./replay";
 import type { ExplorerProgress } from "./types";
 
@@ -57,6 +58,12 @@ export async function findJobsForQuery(input: {
   signal: AbortSignal;
   onProgress?: (progress: ExplorerProgress) => void | Promise<void>;
   onFoundJob?: (job: FoundJob) => void | Promise<void>;
+  /**
+   * Called with each found job's full description text, fetched in the crawl's
+   * own (logged-in) session so login-walled detail pages are readable. Lets the
+   * caller cache it and skip a second, unauthenticated fetch at match time.
+   */
+  onJobDescription?: (url: string, text: string) => void | Promise<void>;
 }): Promise<void> {
   const url = toDomainUrl(input.domain);
   const task = buildAgentTask({
@@ -109,6 +116,15 @@ export async function findJobsForQuery(input: {
       await page.goto(url);
       await page.waitForStablePage(3_000).catch(() => {});
 
+      // Record every reported listing's URL so we can fetch its full JD in this
+      // logged-in session once the agent/replay is done (before the session
+      // closes), then hand the text to the caller.
+      const foundUrls = new Set<string>();
+      const collect = async (job: FoundJob) => {
+        foundUrls.add(job.url);
+        await input.onFoundJob?.(job);
+      };
+
       if (input.signal.aborted) {
         return {
           success: false,
@@ -138,9 +154,15 @@ export async function findJobsForQuery(input: {
         if (replayResult.success && replayResult.jobs.length > 0) {
           for (const job of replayResult.jobs) {
             if (input.signal.aborted) break;
-            await input.onFoundJob?.(job);
+            await collect(job);
           }
           await recordPageMemorySuccess(memory.id, replayResult.jobs.slice(0, 3));
+          await fetchAndReportDescriptions(
+            session,
+            foundUrls,
+            input.onJobDescription,
+            input.signal,
+          );
           return {
             success: true,
             reason: "completed" as const,
@@ -202,7 +224,7 @@ export async function findJobsForQuery(input: {
 
       const actions = buildExplorerActions({
         signal: input.signal,
-        onFoundJob: input.onFoundJob,
+        onFoundJob: collect,
         onLoginRequired: (reason) => {
           return input.onProgress?.({
             phase: "awaiting_login",
@@ -254,7 +276,7 @@ export async function findJobsForQuery(input: {
         retry,
       });
 
-      return await runTask({
+      const taskResult = await runTask({
         task,
         signal: input.signal,
         session,
@@ -289,6 +311,8 @@ export async function findJobsForQuery(input: {
           });
         },
       });
+      await fetchAndReportDescriptions(session, foundUrls, input.onJobDescription, input.signal);
+      return taskResult;
     } finally {
       // Never close a user-owned (CDP-connected) browser.
       if (owned) await session.close().catch(() => {});
@@ -361,6 +385,41 @@ export async function findJobsForQuery(input: {
       error,
     });
   }
+}
+
+/**
+ * Fetches each found job's full description in the crawl's own (logged-in)
+ * session and reports it to the caller. Runs after the agent/replay finishes,
+ * while the session is still open, so login-walled detail pages are readable —
+ * which an unauthenticated match-time fetch could not reach. Bounded so a busy
+ * results page doesn't open dozens of tabs at once; failures are skipped (the
+ * caller keeps the listing summary as a fallback).
+ */
+async function fetchAndReportDescriptions(
+  session: BrowserSession,
+  urls: Set<string>,
+  onJobDescription: ((url: string, text: string) => void | Promise<void>) | undefined,
+  signal: AbortSignal,
+): Promise<void> {
+  if (!onJobDescription || urls.size === 0) return;
+  const list = [...urls];
+  const concurrency = Math.max(
+    1,
+    Number.parseInt(process.env.JD_FETCH_CONCURRENCY ?? "3", 10) || 3,
+  );
+  let cursor = 0;
+  const worker = async () => {
+    while (true) {
+      if (signal.aborted) return;
+      const index = cursor;
+      cursor += 1;
+      if (index >= list.length) return;
+      const url = list[index];
+      const text = await fetchJobDescription(session, url);
+      if (text) await onJobDescription(url, text);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, list.length) }, () => worker()));
 }
 
 /**

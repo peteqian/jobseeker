@@ -1,24 +1,18 @@
-import path from "node:path";
 import { and, eq } from "drizzle-orm";
-import { BrowserSession } from "@peteqian/browser-agent-sdk";
 import type { ChatModelSelection, MatchLevel, StructuredProfile } from "@jobseeker/contracts";
 
 import { db } from "../../db";
-import { dataDir } from "../../env";
 import { jobMatches, jobs } from "../../db/schema";
 import { logInfo, logWarn } from "../../lib/log";
-import { makeId } from "../../lib/ids";
 import { writeProjectRuntimeEvent } from "../runtimeEvents";
 import { assessMatch } from "./assessMatch";
-import { fetchJobDescription } from "./fetchJobDescription";
 
 export interface MatchPassJob {
   jobId: string;
-  url: string;
   title: string;
   company: string;
   location: string;
-  /** Listing snippet, used as a fallback when the full JD page can't be read. */
+  /** Listing snippet, used as a fallback when the cached JD is empty. */
   summary: string;
 }
 
@@ -53,19 +47,20 @@ async function persistMatch(
 async function matchOne(input: {
   projectId: string;
   profile: StructuredProfile;
-  session: BrowserSession;
   job: MatchPassJob;
   modelSelection?: ChatModelSelection;
 }): Promise<void> {
-  const { projectId, profile, session, job, modelSelection } = input;
+  const { projectId, profile, job, modelSelection } = input;
 
-  const fetched = await fetchJobDescription(session, job.url);
-  const descriptionText = fetched ?? job.summary;
-
-  // Cache whatever full text we got so the apply fit judge can reuse it.
-  if (fetched) {
-    await db.update(jobs).set({ descriptionText: fetched }).where(eq(jobs.id, job.jobId)).run();
-  }
+  // The full JD was fetched and cached during the crawl (in its logged-in
+  // session, so login-walled pages are readable). Fall back to the listing
+  // summary if it couldn't be read.
+  const row = await db
+    .select({ descriptionText: jobs.descriptionText })
+    .from(jobs)
+    .where(eq(jobs.id, job.jobId))
+    .get();
+  const descriptionText = row?.descriptionText?.trim() || job.summary;
 
   if (!descriptionText.trim()) {
     await persistMatch(projectId, job.jobId, fallbackMatch("Could not read the job description"));
@@ -88,10 +83,11 @@ async function matchOne(input: {
 }
 
 /**
- * Reads each newly-discovered job's full description and assigns a match level
- * against the profile. Runs after the crawl so the list populates fast; this
- * pass fills in levels (replacing the `pending` placeholder) with bounded
- * concurrency, emitting `jobs.updated` per job so the UI refreshes live.
+ * Assigns a match level to each newly-discovered job against the profile, using
+ * the JD text the crawl already cached. Runs after the crawl so the list
+ * populates fast; this pass fills in levels (replacing the `pending`
+ * placeholder) with bounded concurrency, emitting `jobs.updated` per job so the
+ * UI refreshes live. Pure LLM work — no browser.
  *
  * When there is no profile to compare against, every job gets a neutral
  * `partial` fallback rather than spinning on `pending` forever.
@@ -116,12 +112,6 @@ export async function runMatchingPass(input: {
   }
 
   const concurrency = Math.max(1, Number.parseInt(process.env.MATCH_CONCURRENCY ?? "4", 10) || 4);
-  const session = await BrowserSession.launch({
-    channel: (process.env.EXPLORER_BROWSER_CHANNEL as "chrome" | "chromium" | "msedge") ?? "chrome",
-    headless: true,
-    userDataDir: path.join(dataDir, "browser-profiles", `match-${makeId("pass")}`),
-    autoInstallBrowser: true,
-  });
   logInfo("explorer match pass started", { projectId, jobs: pending.length, concurrency });
 
   let cursor = 0;
@@ -133,7 +123,7 @@ export async function runMatchingPass(input: {
       if (index >= pending.length) return;
       const job = pending[index];
       try {
-        await matchOne({ projectId, profile, session, job, modelSelection });
+        await matchOne({ projectId, profile, job, modelSelection });
       } catch (error) {
         logWarn("explorer match failed", {
           jobId: job.jobId,
@@ -145,12 +135,6 @@ export async function runMatchingPass(input: {
     }
   };
 
-  try {
-    await Promise.all(
-      Array.from({ length: Math.min(concurrency, pending.length) }, () => worker()),
-    );
-  } finally {
-    await session.close().catch(() => {});
-    logInfo("explorer match pass done", { projectId, jobs: pending.length });
-  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, pending.length) }, () => worker()));
+  logInfo("explorer match pass done", { projectId, jobs: pending.length });
 }
