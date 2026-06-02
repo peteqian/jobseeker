@@ -2,6 +2,7 @@ import { CODEX_MODELS } from "@jobseeker/contracts";
 import * as Layer from "effect/Layer";
 
 import { getProviderSettings } from "../../lib/provider-settings";
+import { withCodexAuthGuard } from "../../services/llm/codexAuth";
 import { createCodexSession } from "../codex";
 import { CodexProvider } from "../services/codexProvider";
 import type { ChatModelSelection } from "@jobseeker/contracts";
@@ -70,43 +71,79 @@ export function makeCodexProvider(): ChatProvider {
     },
     run(systemPrompt, history, selection, runtime, signal) {
       const cfg = resolveCodexConfig(selection, runtime);
-      const session = createCodexSession({
-        binaryPath: cfg.binaryPath,
-        model: cfg.model,
-        reasoningEffort: cfg.reasoningEffort,
-        cwd: runtime?.cwd,
-        codexHome: cfg.codexHome,
-        resumeId: cfg.resumeId,
-      });
       const prompt = renderCodexPrompt(systemPrompt, history, Boolean(cfg.resumeId));
-      const turn = session.runPrompt(prompt, { signal });
-      return Object.assign(turn, {
-        result: turn.result.then((r) => ({
-          text: r.text,
-          sessionId: session.threadId ?? cfg.resumeId,
-        })),
+      let settle!: (value: { text: string; sessionId?: string }) => void;
+      let fail!: (error: unknown) => void;
+      const result = new Promise<{ text: string; sessionId?: string }>((res, rej) => {
+        settle = res;
+        fail = rej;
       });
+      // Guard the session kickoff (where codex authenticates and may refresh the
+      // shared single-use token) so it doesn't race the explorer/match passes.
+      const stream = (async function* (): AsyncGenerator<string> {
+        let turn: ReturnType<ReturnType<typeof createCodexSession>["runPrompt"]>;
+        try {
+          turn = await withCodexAuthGuard(async () => {
+            const session = createCodexSession({
+              binaryPath: cfg.binaryPath,
+              model: cfg.model,
+              reasoningEffort: cfg.reasoningEffort,
+              cwd: runtime?.cwd,
+              codexHome: cfg.codexHome,
+              resumeId: cfg.resumeId,
+            });
+            const started = session.runPrompt(prompt, { signal });
+            started.result.then(
+              (r) => settle({ text: r.text, sessionId: session.threadId ?? cfg.resumeId }),
+              fail,
+            );
+            return started;
+          });
+        } catch (error) {
+          fail(error);
+          throw error;
+        }
+        yield* turn;
+      })();
+      return Object.assign(stream, { result });
     },
     runEvents(systemPrompt, history, selection, runtime, signal) {
       const cfg = resolveCodexConfig(selection, runtime);
-      const session = createCodexSession({
-        binaryPath: cfg.binaryPath,
-        model: cfg.model,
-        reasoningEffort: cfg.reasoningEffort,
-        cwd: runtime?.cwd,
-        codexHome: cfg.codexHome,
-        resumeId: cfg.resumeId,
+      const prompt = renderCodexPrompt(systemPrompt, history, Boolean(cfg.resumeId));
+      let settle!: (value: { text: string; sessionId?: string }) => void;
+      let fail!: (error: unknown) => void;
+      const result = new Promise<{ text: string; sessionId?: string }>((res, rej) => {
+        settle = res;
+        fail = rej;
       });
-      const events = session.runEvents(
-        renderCodexPrompt(systemPrompt, history, Boolean(cfg.resumeId)),
-        {
-          signal,
-        },
-      );
       // Emit only the new suffix of each item's text, so consumers get deltas.
       const emitted = new Map<string, number>();
 
       const stream = (async function* (): AsyncGenerator<ProviderStreamEvent> {
+        let events: ReturnType<ReturnType<typeof createCodexSession>["runEvents"]>;
+        try {
+          // Guard the session kickoff (codex auth/refresh) against concurrent
+          // codex work on the shared token.
+          events = await withCodexAuthGuard(async () => {
+            const session = createCodexSession({
+              binaryPath: cfg.binaryPath,
+              model: cfg.model,
+              reasoningEffort: cfg.reasoningEffort,
+              cwd: runtime?.cwd,
+              codexHome: cfg.codexHome,
+              resumeId: cfg.resumeId,
+            });
+            const ev = session.runEvents(prompt, { signal });
+            ev.result.then(
+              (r) => settle({ text: r.text, sessionId: session.threadId ?? cfg.resumeId }),
+              fail,
+            );
+            return ev;
+          });
+        } catch (error) {
+          fail(error);
+          throw error;
+        }
         for await (const event of events) {
           if (
             event.type !== "item.started" &&
@@ -131,12 +168,7 @@ export function makeCodexProvider(): ChatProvider {
         }
       })();
 
-      return Object.assign(stream, {
-        result: events.result.then((r) => ({
-          text: r.text,
-          sessionId: session.threadId ?? cfg.resumeId,
-        })),
-      });
+      return Object.assign(stream, { result });
     },
   };
 }

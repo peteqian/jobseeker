@@ -17,6 +17,7 @@ import {
 import { getEnabledDomains, getSearchQueries, type QuerySource } from "./explorer/queryPlanning";
 import { findJobsForQuery, isAbortLikeError } from "./explorer/runtime";
 import type { ExplorerProgress, ExplorerRunOptions } from "./explorer/types";
+import { withCodexAuthGuard } from "./llm/codexAuth";
 import { runMatchingPass, type MatchPassJob } from "./match/runMatchingPass";
 
 export type { ExplorerProgress, ExplorerRunOptions } from "./explorer/types";
@@ -269,7 +270,9 @@ export async function runExplorerDiscovery(
   };
 
   await runWithConcurrency(
-    plannedRuns.map((run, index) => () => processPair(run, index)),
+    // Guard each query's codex work so parallel crawls don't race the shared
+    // token's single-use refresh near expiry (no-op when the token is fresh).
+    plannedRuns.map((run, index) => () => withCodexAuthGuard(() => processPair(run, index))),
     concurrency,
     options?.signal,
   );

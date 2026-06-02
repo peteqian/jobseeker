@@ -2,6 +2,7 @@ import type { ChatModelSelection } from "@jobseeker/contracts";
 import { CLAUDE_MODELS, CODEX_MODELS } from "@jobseeker/contracts";
 
 import { env } from "../../env";
+import { isCodexAvailable } from "../../lib/codexBin";
 import { logError, logInfo, logWarn } from "../../lib/log";
 import { ensureScopeDir } from "../../lib/paths";
 import { pickProviderAdapter } from "../../provider/layers/providerAdapterRegistry";
@@ -192,16 +193,6 @@ export function parseJsonResponse<T = unknown>(text: string, label: string): T |
   } catch (error) {
     logError(`${label} JSON parse failed`, { error });
     return null;
-  }
-}
-
-export function isCodexAvailable(): boolean {
-  const binPath = process.env.CODEX_BIN ?? "codex";
-  try {
-    const proc = Bun.spawnSync([binPath, "--version"], { stdout: "pipe", stderr: "pipe" });
-    return proc.exitCode === 0;
-  } catch {
-    return false;
   }
 }
 

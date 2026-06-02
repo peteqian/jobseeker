@@ -4,6 +4,7 @@ import type { ChatModelSelection, MatchLevel, StructuredProfile } from "@jobseek
 import { db } from "../../db";
 import { jobMatches, jobs } from "../../db/schema";
 import { logInfo, logWarn } from "../../lib/log";
+import { withCodexAuthGuard } from "../llm/codexAuth";
 import { writeProjectRuntimeEvent } from "../runtimeEvents";
 import { assessMatch } from "./assessMatch";
 
@@ -123,7 +124,9 @@ export async function runMatchingPass(input: {
       if (index >= pending.length) return;
       const job = pending[index];
       try {
-        await matchOne({ projectId, profile, job, modelSelection });
+        // Guard the codex call so workers don't race the shared token's
+        // single-use refresh near expiry (no-op when the token is fresh).
+        await withCodexAuthGuard(() => matchOne({ projectId, profile, job, modelSelection }));
       } catch (error) {
         logWarn("explorer match failed", {
           jobId: job.jobId,
