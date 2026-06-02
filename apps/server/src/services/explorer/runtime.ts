@@ -18,7 +18,8 @@ import {
   getLaunchOptions,
   getRetryLaunchOptions,
   isBotInterstitial,
-  isModelDecisionFailure,
+  isAuthFailure,
+  isModelInfraFailure,
 } from "./browserLaunch";
 import { computeFingerprint, extractUrlPattern } from "./fingerprint";
 import { waitForLogin } from "./loginGate";
@@ -322,12 +323,13 @@ export async function findJobsForQuery(input: {
   try {
     let result = await runOnce(getLaunchOptions(), false);
 
-    // A model/auth failure (expired Codex token, CLI crash) is not a page
-    // interstitial — relaunching the browser just loops. Surface it and stop.
-    if (!result.success && isModelDecisionFailure(result.summary)) {
-      logWarn("explorer query failed: model/auth error", {
+    // A genuine auth failure (dead/expired/reused Codex token) is the only case
+    // where re-authenticating helps — surface that and stop.
+    if (!result.success && isAuthFailure(result.summary)) {
+      logWarn("explorer query failed: auth error", {
         domain: input.domain,
         query: input.query,
+        summary: clipRawCodexOutput(result.summary),
       });
       await input.onProgress?.({
         phase: "blocked",
@@ -335,7 +337,20 @@ export async function findJobsForQuery(input: {
         query: input.query,
         currentQuery: input.currentQuery,
         totalQueries: input.totalQueries,
-        message: "Model error — re-authenticate Codex (run `codex login`), then run again.",
+        message: "Codex auth failed — re-authenticate (run `codex login`), then run again.",
+      });
+      return;
+    }
+
+    // Any other model-layer failure (Codex CLI exited, rate limit, transient
+    // model error) is not a page interstitial — relaunching the browser just
+    // loops, and it is not an auth problem, so don't tell the user to re-login.
+    // Log the real summary and stop this query; the run continues with others.
+    if (!result.success && isModelInfraFailure(result.summary)) {
+      logWarn("explorer query failed: model error", {
+        domain: input.domain,
+        query: input.query,
+        summary: clipRawCodexOutput(result.summary),
       });
       return;
     }

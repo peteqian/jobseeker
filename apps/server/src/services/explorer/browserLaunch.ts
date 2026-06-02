@@ -72,22 +72,38 @@ export function isBotInterstitial(summary: string): boolean {
 }
 
 /**
- * True when the failure is an infrastructure/auth problem from the model layer
- * (e.g. Codex CLI exited, expired/reused auth token) rather than a page state.
+ * True only for a genuine auth/credential failure — a dead, expired, or reused
+ * Codex token. These are the only failures that warrant asking the user to
+ * re-authenticate. A generic Codex crash (non-zero exit, rate limit, transient
+ * model error) is NOT auth and must not match, or every hiccup misreports as a
+ * login problem.
+ */
+export function isAuthFailure(summary: string): boolean {
+  const text = summary.toLowerCase();
+  return (
+    text.includes("refresh_token") ||
+    text.includes("token_expired") ||
+    text.includes("invalidated") ||
+    text.includes("unauthorized") ||
+    text.includes("re-authenticate") ||
+    text.includes("sign in again")
+  );
+}
+
+/**
+ * True when the failure comes from the model layer (Codex CLI exited, a model
+ * decision error, or an auth problem) rather than a page state.
  *
  * Such a summary echoes the full prompt — which itself contains words like
  * "captcha" and "challenge" — and would otherwise false-positive
  * `isBotInterstitial` and trigger a pointless browser-respawn retry. Detect it
- * first and skip the retry: relaunching the browser cannot fix expired auth.
+ * and skip the retry: relaunching the browser cannot fix a model-side failure.
  */
-export function isModelDecisionFailure(summary: string): boolean {
+export function isModelInfraFailure(summary: string): boolean {
   const text = summary.toLowerCase();
   return (
+    isAuthFailure(summary) ||
     text.includes("model decision failed") ||
-    text.includes("codex exited") ||
-    text.includes("refresh_token") ||
-    text.includes("token_expired") ||
-    text.includes("unauthorized") ||
-    text.includes("sign in again")
+    text.includes("codex exited")
   );
 }
