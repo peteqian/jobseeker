@@ -43,7 +43,14 @@ export function buildAgentTask(input: {
   const lines = [
     `Find up to ${input.maxJobs} job postings on ${input.domain} for "${input.navigation.query}".`,
     `Prefer listings posted ${freshnessText}.`,
+    "Before applying any filter, inspect the search page first: sites expose filters differently (dropdowns, radio groups, checkboxes, chips, sidebar facets), and the same filter may live in different places on different sites. Look at the visible controls, and inspect the page HTML if a control is not visually obvious, then use what this site actually provides.",
   ];
+
+  if (input.freshness !== "any") {
+    lines.push(
+      `Apply the site's date-posted filter instead of judging dates yourself (e.g. SEEK exposes a "Listing time" dropdown with Today / Last 3 days / Last 7 days / Last 14 days / Last 30 days; other sites name and shape it differently). Pick the closest option covering ${freshnessText}. Only fall back to scanning posting dates if the site has no such filter.`,
+    );
+  }
 
   if (input.navigation.locationText) {
     lines.push(
@@ -59,12 +66,12 @@ export function buildAgentTask(input: {
           ? "Prefer hybrid roles."
           : "Prefer on-site roles.";
     lines.push(
-      `${arrangementHint} Do not type "remote"/"hybrid"/"on-site" into the keyword search - use the site's dedicated work-arrangement filter (usually radio buttons or checkboxes labelled On-site / Hybrid / Remote in the refine/filter panel).`,
+      `${arrangementHint} Do not type "remote"/"hybrid"/"on-site" into the keyword search - use the site's dedicated work-arrangement filter (often labelled On-site / Hybrid / Remote, but check what this site offers).`,
     );
   }
 
   lines.push(
-    "Keyword search box is only for the role/title query. Location and work arrangement belong in their dedicated inputs or filters.",
+    "Keyword search box is only for the role/title query. Location, work arrangement, and date posted belong in their dedicated inputs or filters.",
     'If a dismissable promo/sign-in popup covers the page (e.g. SEEK\'s "Sign in to find jobs matched to you"), first try to close it: click its X, click "See more", or click outside it, then keep browsing the public listings.',
     "If a sign-in/login wall blocks the listings and you cannot view jobs without an account, call report_blocked with a short reason. This PAUSES the run and asks the user to sign in in the open browser window; do NOT create an account or sign in yourself. When report_blocked returns, the user has signed in - keep browsing the now-visible listings and report jobs. Do NOT finish because of the wall.",
     "Return only currently visible, real job listings from this site.",
