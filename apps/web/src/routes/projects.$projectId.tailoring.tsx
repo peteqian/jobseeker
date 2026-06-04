@@ -3,6 +3,7 @@ import { FileText } from "lucide-react";
 import { createFileRoute } from "@tanstack/react-router";
 
 import { Badge } from "@/components/ui/badge";
+import { jobSummaryText } from "@/lib/job-display";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
@@ -91,7 +92,11 @@ function TailoringPage() {
                   </div>
                   <Badge variant="outline">{match?.score ?? "-"}</Badge>
                 </div>
-                <p className="mt-3 text-sm leading-6 text-muted-foreground">{job.summary}</p>
+                {jobSummaryText(job.summary) ? (
+                  <p className="mt-3 text-sm leading-6 text-muted-foreground">
+                    {jobSummaryText(job.summary)}
+                  </p>
+                ) : null}
               </button>
             ))}
           </div>

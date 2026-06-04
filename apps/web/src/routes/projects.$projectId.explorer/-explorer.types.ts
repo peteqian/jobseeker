@@ -4,6 +4,7 @@ import type {
   JobRecord,
   ProjectDocument,
 } from "@jobseeker/contracts";
+import type { JobStage } from "@/lib/job-stage";
 
 export interface ExplorerFeedItem {
   id: string;
@@ -47,4 +48,6 @@ export interface JobResultCardProps {
   busyAction: string | null;
   hasResume: boolean;
   hasCoverLetter: boolean;
+  /** Pipeline position shown as a badge; derived in ResultsTab. */
+  stage: JobStage;
 }
