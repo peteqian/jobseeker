@@ -2,6 +2,8 @@ name: Release
 
 on:
   push:
+    branches:
+      - dev
     tags:
       - "v*.*.*"
   schedule:
@@ -23,6 +25,12 @@ on:
 
 permissions:
   contents: write
+
+# Rapid pushes to dev cancel the in-flight staging build; tag and
+# scheduled runs land in distinct groups and are unaffected.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref == 'refs/heads/dev' }}
 
 jobs:
   check_changes:
@@ -85,10 +93,25 @@ jobs:
           RUN_DATE: ${{ github.run_started_at }}
           RUN_NUMBER: ${{ github.run_number }}
           SHA: ${{ github.sha }}
+          REF: ${{ github.ref }}
           REF_NAME: ${{ github.ref_name }}
           EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
+
+          if [[ "$EVENT_NAME" == "push" && "$REF" == "refs/heads/dev" ]]; then
+            staging_date=$(date -u -d "$RUN_DATE" +%Y%m%d)
+            version="0.0.0-staging.${staging_date}.${RUN_NUMBER}"
+
+            echo "release_channel=staging" >> "$GITHUB_OUTPUT"
+            echo "version=$version" >> "$GITHUB_OUTPUT"
+            echo "tag=staging" >> "$GITHUB_OUTPUT"
+            echo "release_name=Jobseeker Staging ${version}" >> "$GITHUB_OUTPUT"
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "make_latest=false" >> "$GITHUB_OUTPUT"
+            echo "ref=$SHA" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
           is_nightly="false"
           if [[ "$EVENT_NAME" == "schedule" ]]; then
@@ -255,12 +278,19 @@ jobs:
           path: release-assets
           merge-multiple: true
 
+      - name: Replace previous staging release
+        if: needs.preflight.outputs.release_channel == 'staging'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release delete staging --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes || true
+
       - name: Create release and upload assets
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.preflight.outputs.tag }}
           name: ${{ needs.preflight.outputs.release_name }}
+          target_commitish: ${{ needs.preflight.outputs.ref }}
           prerelease: ${{ needs.preflight.outputs.is_prerelease == 'true' }}
           make_latest: ${{ needs.preflight.outputs.make_latest == 'true' }}
           files: release-assets/**
-          generate_release_notes: true
+          generate_release_notes: ${{ needs.preflight.outputs.release_channel != 'staging' }}
