@@ -3,6 +3,7 @@
   "compilerOptions": {
     "typeRoots": ["../../node_modules/@types"],
     "types": ["bun"],
+    "jsx": "react-jsx",
     "allowImportingTsExtensions": true
   },
   "include": ["src/**/*.ts"]

@@ -4,6 +4,9 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "paths": {
+      "@jobseeker/resume-pdf": ["./packages/resume-pdf/src/index.ts"],
+      "@jobseeker/resume-pdf/document": ["./packages/resume-pdf/src/document.tsx"],
+      "@jobseeker/resume-pdf/node": ["./packages/resume-pdf/src/node.tsx"],
       "@jobseeker/contracts": ["./packages/contracts/src/index.ts"],
       "@jobseeker/contracts-runtime": ["./packages/contracts-runtime/src/index.ts"],
       "effect-codex-app-server/client": ["./packages/effect-codex-app-server/src/client.ts"],
