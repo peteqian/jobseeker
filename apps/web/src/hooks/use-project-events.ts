@@ -39,13 +39,15 @@ export function useProjectEvents(projectId: string | null) {
     const onEvent = (rawEvent: MessageEvent<string>) => {
       const event = JSON.parse(rawEvent.data) as RuntimeEvent;
       let isNew = false;
+      // The historical fetch is chronological (oldest first); append live
+      // events so the array stays consistently ordered for all consumers.
       queryClient.setQueryData<RuntimeEvent[]>(eventsKeys.project(projectId), (current = []) => {
         if (current.some((entry) => entry.id === event.id)) return current;
         isNew = true;
-        return [event, ...current];
+        return [...current, event];
       });
       queryClient.setQueryData<RuntimeEvent[]>(eventsKeys.all(), (current = []) =>
-        current.some((entry) => entry.id === event.id) ? current : [event, ...current],
+        current.some((entry) => entry.id === event.id) ? current : [...current, event],
       );
       if (!isNew) return;
       const payload = event.payload as { taskType?: string; phase?: string } | undefined;

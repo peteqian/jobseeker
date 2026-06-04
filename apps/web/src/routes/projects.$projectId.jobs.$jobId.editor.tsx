@@ -5,6 +5,7 @@ import ReactMarkdown from "react-markdown";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { RecruiterReviewPanel } from "@/components/recruiter-review-panel";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 
@@ -12,6 +13,7 @@ import { useProjectEvents } from "@/hooks/use-project-events";
 import { useStartTask } from "@/hooks/use-project-mutations";
 import { useUpdateDocument } from "@/hooks/use-project-mutations";
 import { downloadMarkdownPdf } from "@/lib/resume-pdf";
+import { deriveGeneratingByJob } from "@/lib/tailoring-activity";
 import { projectRouteId } from "@/lib/project-route";
 import { useProjectStore } from "@/stores/project-store";
 
@@ -58,6 +60,7 @@ function JobEditorPage() {
 
   const [content, setContent] = useState(doc?.content ?? "");
   const [baselineContent, setBaselineContent] = useState(doc?.content ?? "");
+  const [rightPane, setRightPane] = useState<"preview" | "review">("preview");
 
   useEffect(() => {
     if (doc?.content !== undefined) {
@@ -66,25 +69,10 @@ function JobEditorPage() {
     }
   }, [doc?.id, doc?.content]);
 
-  const isGenerating = useMemo(() => {
-    const latestStart = [...events]
-      .reverse()
-      .find(
-        (event) =>
-          event.type === "task.started" &&
-          event.payload.jobId === jobId &&
-          event.payload.taskType ===
-            (kind === "resume" ? "resume_tailoring" : "cover_letter_tailoring"),
-      );
-    if (!latestStart) return false;
-    const laterFinish = events.find(
-      (event) =>
-        new Date(event.createdAt).getTime() > new Date(latestStart.createdAt).getTime() &&
-        (event.type === "task.completed" || event.type === "task.failed") &&
-        event.payload.taskId === latestStart.payload.taskId,
-    );
-    return !laterFinish;
-  }, [events, jobId, kind]);
+  const isGenerating = useMemo(
+    () => deriveGeneratingByJob(events).get(jobId)?.has(tailoringKind) ?? false,
+    [events, jobId, tailoringKind],
+  );
 
   const dirty = content !== baselineContent;
 
@@ -125,7 +113,7 @@ function JobEditorPage() {
     const filename = `${
       kind === "resume" ? "resume" : "cover-letter"
     }-${job?.company ?? "job"}-${job?.title ?? ""}`.replace(/[^a-z0-9-]/gi, "_");
-    await downloadMarkdownPdf(content, filename);
+    await downloadMarkdownPdf(content, filename, kind === "resume" ? "resume" : "cover-letter");
   };
 
   if (!project) {
@@ -238,47 +226,6 @@ function JobEditorPage() {
         </div>
       </header>
 
-      {review && !isGenerating ? (
-        <div className="rounded-lg border bg-muted/30 p-4">
-          <div className="mb-2 flex items-center gap-2">
-            <span className="text-sm font-semibold">Recruiter review</span>
-            <Badge
-              variant={review.score >= 85 ? "default" : "outline"}
-              className={
-                review.score >= 85 ? "" : review.score >= 70 ? "text-amber-600" : "text-destructive"
-              }
-            >
-              {review.score}/100
-            </Badge>
-          </div>
-          {review.issues.length > 0 ? (
-            <ul className="space-y-1 text-sm text-muted-foreground">
-              {review.issues.map((issue) => (
-                <li key={`${issue.severity}-${issue.issue}`}>
-                  <span className="font-medium text-foreground/80">[{issue.severity}]</span>{" "}
-                  {issue.issue}
-                  {issue.fix ? <span className="text-foreground/60"> — {issue.fix}</span> : null}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-sm text-muted-foreground">No issues flagged — looks strong.</p>
-          )}
-          {history.length > 1 ? (
-            <div className="mt-3 border-t pt-2">
-              <p className="mb-1 text-xs font-medium text-muted-foreground">Score history</p>
-              <ul className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                {history.map((entry) => (
-                  <li key={entry.id}>
-                    {entry.score}/100 · {new Date(entry.createdAt).toLocaleString()}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-
       {!doc && !isGenerating ? (
         <div className="flex flex-1 items-center justify-center rounded-lg border border-dashed bg-muted/30 p-12 text-center">
           <div className="space-y-3">
@@ -313,12 +260,40 @@ function JobEditorPage() {
             />
           </div>
           <div className="flex min-h-0 flex-col">
-            <Badge variant="outline" className="mb-2 w-fit text-xs">
-              Preview
-            </Badge>
-            <div className="flex-1 overflow-y-auto rounded-md border bg-background p-6 prose prose-sm max-w-none dark:prose-invert">
-              <ReactMarkdown>{content}</ReactMarkdown>
+            {/* Right pane switches between the rendered preview and the
+                recruiter review so the verdict never crowds out the editor. */}
+            <div className="mb-2 flex items-center gap-1.5">
+              <Button
+                type="button"
+                size="sm"
+                variant={rightPane === "preview" ? "default" : "outline"}
+                className="h-7 px-2.5 text-xs"
+                onClick={() => setRightPane("preview")}
+              >
+                Preview
+              </Button>
+              {review ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={rightPane === "review" ? "default" : "outline"}
+                  className="h-7 px-2.5 text-xs"
+                  onClick={() => setRightPane("review")}
+                >
+                  Review · {review.score}/100
+                  {review.issues.length > 0 ? ` · ${review.issues.length} issues` : ""}
+                </Button>
+              ) : null}
             </div>
+            {rightPane === "review" && review ? (
+              <div className="min-h-0 flex-1 overflow-y-auto">
+                <RecruiterReviewPanel review={review} history={history} />
+              </div>
+            ) : (
+              <div className="flex-1 overflow-y-auto rounded-md border bg-background p-6 prose prose-sm max-w-none dark:prose-invert">
+                <ReactMarkdown>{content}</ReactMarkdown>
+              </div>
+            )}
           </div>
         </div>
       )}

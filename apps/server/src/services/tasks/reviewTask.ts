@@ -3,10 +3,13 @@ import type { ChatModelSelection } from "@jobseeker/contracts";
 
 import { db } from "../../db";
 import { documents, jobs } from "../../db/schema";
+import { readProjectProfile } from "../projects/profile";
+import { getProjectResumeText } from "../projects/resume";
 import { writeProjectRuntimeEvent } from "../runtimeEvents";
 import { reviewTailoredDoc } from "./recruiterReview";
 import {
   docKindForTailoring,
+  formatCandidateBlocks,
   formatJobBlock,
   persistReview,
   reviewSkillForTailoring,
@@ -43,6 +46,10 @@ export async function runReviewTask(input: {
 
   await progress(projectId, taskId, kind, jobId, "reviewing");
 
+  const profile = await readProjectProfile(projectId);
+  const resumeText = (await getProjectResumeText(projectId)) ?? "";
+  const candidateBlocks = formatCandidateBlocks(profile, resumeText);
+
   const verdict = await reviewTailoredDoc({
     docMarkdown: doc.content,
     jobBlock: formatJobBlock({
@@ -52,6 +59,7 @@ export async function runReviewTask(input: {
       url: job.url,
       text: job.descriptionText ?? job.summary,
     }),
+    candidateBlocks: candidateBlocks || undefined,
     reviewSkill: reviewSkillForTailoring(kind),
     modelSelection,
   });
