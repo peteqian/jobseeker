@@ -1,5 +1,6 @@
 import { and, eq, lt } from "drizzle-orm";
 import type { FoundJob } from "./jobTypes";
+import { extractJobDescription } from "./jobDescriptionText";
 
 import { db } from "../../db";
 import { jobMatches, jobs } from "../../db/schema";
@@ -101,9 +102,13 @@ export async function saveDiscoveredJob(input: {
   return { jobId: resolvedJobId, url: normalizedUrl };
 }
 
-/** Caches the full job-description text on a discovered job row. */
+/** Caches the full job-description text on a discovered job row, stripped of page chrome. */
 export async function setJobDescription(jobId: string, text: string): Promise<void> {
-  await db.update(jobs).set({ descriptionText: text }).where(eq(jobs.id, jobId)).run();
+  await db
+    .update(jobs)
+    .set({ descriptionText: extractJobDescription(text) })
+    .where(eq(jobs.id, jobId))
+    .run();
 }
 
 /** Normalizes only absolute URLs; relative or malformed URLs are discarded. */

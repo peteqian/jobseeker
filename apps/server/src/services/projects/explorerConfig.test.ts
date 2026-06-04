@@ -36,6 +36,7 @@ describe("mapExplorerConfigRow", () => {
       freshness: "24h",
       jobLimit: 40,
       runMode: "sequential",
+      checkExpiredDaily: false,
     });
   });
 

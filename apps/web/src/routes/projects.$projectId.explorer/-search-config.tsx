@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { FRESHNESS_LABELS } from "@/lib/explorer";
 
 interface SearchConfigProps {
@@ -202,6 +203,22 @@ export function SearchConfig({ search, onChange, roleSuggestions }: SearchConfig
         <p className="text-xs text-muted-foreground">
           Sequential runs one browser at a time. Parallel is faster but opens several browsers at
           once.
+        </p>
+      </div>
+
+      {/* Daily expiry check */}
+      <div className="space-y-2">
+        <div className="flex items-center gap-2">
+          <Switch
+            id="search-check-expired"
+            checked={search.checkExpiredDaily ?? false}
+            onCheckedChange={(checked) => onChange({ ...search, checkExpiredDaily: checked })}
+          />
+          <Label htmlFor="search-check-expired">Check found jobs daily for expired listings</Label>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Once a day the server re-fetches each found job's URL and marks listings that are no
+          longer advertised.
         </p>
       </div>
     </div>

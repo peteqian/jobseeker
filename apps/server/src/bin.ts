@@ -14,6 +14,7 @@ import { registerCoachRoutes } from "./api/coach";
 import { logError, logInfo } from "./lib/log";
 import { runMigrations } from "./db/migrate";
 import { recoverStaleTasks } from "./services/tasks/recover";
+import { startExpiryScheduler } from "./services/explorer/expiryCheck";
 import { startWsServer } from "./ws";
 
 const app = new Hono();
@@ -80,3 +81,6 @@ logInfo("http server listening", {
 
 // Start the WebSocket RPC server on a separate port
 startWsServer();
+
+// Daily job-expiry checks for projects that opted in via explorer config.
+startExpiryScheduler();

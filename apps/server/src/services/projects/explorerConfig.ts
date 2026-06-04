@@ -73,6 +73,7 @@ function resolveSearchConfig(row: typeof explorerConfigs.$inferSelect): Explorer
       freshness: coerceFreshness(parsed.freshness),
       jobLimit: typeof parsed.jobLimit === "number" ? parsed.jobLimit : DEFAULT_JOB_LIMIT,
       runMode: coerceRunMode(parsed.runMode),
+      checkExpiredDaily: parsed.checkExpiredDaily === true,
     };
   }
 
