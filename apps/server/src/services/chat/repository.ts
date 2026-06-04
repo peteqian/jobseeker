@@ -115,7 +115,10 @@ export function toTopicMeta(row: {
 }
 
 /** Maps a chat-thread DB row into the API contract shape. */
-export function toThread(row: typeof chatThreads.$inferSelect): ChatThread {
+export function toThread(
+  row: typeof chatThreads.$inferSelect,
+  anchor?: { type: string; id: string },
+): ChatThread {
   return {
     id: row.id,
     projectId: row.projectId,
@@ -124,6 +127,7 @@ export function toThread(row: typeof chatThreads.$inferSelect): ChatThread {
     status: row.status as ChatThread["status"],
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+    ...(anchor ? { anchor } : {}),
   };
 }
 

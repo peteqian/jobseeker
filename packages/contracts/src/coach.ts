@@ -51,7 +51,7 @@ export interface CoachGap {
   createdAt: string;
 }
 
-export type CoachAnchorType = "claim" | "gap";
+export type CoachAnchorType = "claim" | "gap" | "profile-section";
 
 export interface CoachThreadAnchor {
   id: string;

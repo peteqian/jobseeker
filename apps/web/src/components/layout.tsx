@@ -2,16 +2,20 @@ import {
   AlertCircle,
   BriefcaseBusiness,
   ChevronLeft,
+  ClipboardList,
   Compass,
   Files,
   LayoutGrid,
+  PanelRight,
   Plus,
   Settings,
   Sparkles,
+  Trash2,
   Upload,
   Workflow,
 } from "lucide-react";
 import { useMemo, useState } from "react";
+import { Group, Panel, Separator } from "react-resizable-panels";
 import { useForm } from "@tanstack/react-form";
 import { useQuery } from "@tanstack/react-query";
 import { Outlet, useLocation, useNavigate } from "@tanstack/react-router";
@@ -39,6 +43,7 @@ import {
   SidebarHeader,
   SidebarInset,
   SidebarMenu,
+  SidebarMenuAction,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarProvider,
@@ -47,13 +52,15 @@ import {
 
 import { projectRouteId } from "@/lib/project-route";
 import { projectsListQueryOptions } from "@/lib/query-options";
-import { useCreateProject } from "@/hooks/use-project-mutations";
+import { useCreateProject, useDeleteProject } from "@/hooks/use-project-mutations";
 import { useUIStore } from "@/stores/ui-store";
 import {
   ShellHeaderActionsHost,
   ShellHeaderProvider,
   useShellHeaderContext,
 } from "@/providers/shell-header-context";
+import { AssistantDockProvider, useAssistantDock } from "@/providers/assistant-dock-context";
+import { AssistantDock } from "@/components/assistant/assistant-dock";
 
 const primaryNavigation = [
   { to: "/projects", label: "Projects", icon: Workflow },
@@ -65,12 +72,15 @@ const projectSteps = [
   { segment: "/coach", label: "Resume Studio", icon: Upload },
   { segment: "/profile", label: "Profile", icon: Sparkles },
   { segment: "/explorer", label: "Explorer", icon: Compass },
+  { segment: "/tracker", label: "Tracker", icon: ClipboardList },
 ] as const;
 
 export function AppLayout() {
   return (
     <ShellHeaderProvider>
-      <AppLayoutInner />
+      <AssistantDockProvider>
+        <AppLayoutInner />
+      </AssistantDockProvider>
     </ShellHeaderProvider>
   );
 }
@@ -79,8 +89,10 @@ function AppLayoutInner() {
   const navigate = useNavigate();
   const location = useLocation();
   const { meta: shellHeaderMeta } = useShellHeaderContext();
+  const { isOpen: dockOpen, toggle: toggleDock } = useAssistantDock();
   const { data: projects = [] } = useQuery(projectsListQueryOptions());
   const createProject = useCreateProject();
+  const deleteProject = useDeleteProject();
   const error = useUIStore((state) => state.error);
   const clearError = useUIStore((state) => state.clearError);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
@@ -112,6 +124,20 @@ function AppLayoutInner() {
 
   const isProjectRoute = projectMatch !== null;
   const isProjectIndexRoute = /^\/projects\/?$/.test(location.pathname);
+
+  const handleDeleteProject = (project: (typeof projects)[number]) => {
+    const confirmed = window.confirm(
+      `Delete "${project.project.title}"? This permanently removes its jobs, documents, and chats. This can't be undone.`,
+    );
+    if (!confirmed) return;
+
+    const isCurrent =
+      projectMatch !== null && projectRouteId(projectMatch) === projectRouteId(project);
+
+    void deleteProject.mutateAsync(project.project.id).then(() => {
+      if (isCurrent) void navigate({ to: "/projects" });
+    });
+  };
 
   const pageMeta = useMemo(() => {
     if (shellHeaderMeta) {
@@ -228,6 +254,15 @@ function AppLayoutInner() {
                               <div className="truncate font-medium">{project.project.title}</div>
                             </div>
                           </SidebarMenuButton>
+                          <SidebarMenuAction
+                            showOnHover
+                            aria-label={`Delete ${project.project.title}`}
+                            title="Delete project"
+                            className="hover:bg-destructive/10 hover:text-destructive"
+                            onClick={() => handleDeleteProject(project)}
+                          >
+                            <Trash2 />
+                          </SidebarMenuAction>
                         </SidebarMenuItem>
                       ))}
                     </SidebarMenu>
@@ -293,6 +328,15 @@ function AppLayoutInner() {
                               <div className="truncate font-medium">{project.project.title}</div>
                             </div>
                           </SidebarMenuButton>
+                          <SidebarMenuAction
+                            showOnHover
+                            aria-label={`Delete ${project.project.title}`}
+                            title="Delete project"
+                            className="hover:bg-destructive/10 hover:text-destructive"
+                            onClick={() => handleDeleteProject(project)}
+                          >
+                            <Trash2 />
+                          </SidebarMenuAction>
                         </SidebarMenuItem>
                       ))}
                     </SidebarMenu>
@@ -330,14 +374,26 @@ function AppLayoutInner() {
               </div>
             </div>
 
-            <ShellHeaderActionsHost />
-
-            {isProjectIndexRoute ? (
-              <Button size="sm" onClick={() => setCreateDialogOpen(true)}>
-                <Plus className="size-4" />
-                Create project
-              </Button>
-            ) : null}
+            <div className="flex items-center gap-2">
+              <ShellHeaderActionsHost />
+              {isProjectRoute ? (
+                <Button
+                  variant={dockOpen ? "secondary" : "ghost"}
+                  size="sm"
+                  aria-label="Toggle assistant"
+                  onClick={toggleDock}
+                >
+                  <PanelRight className="size-4" />
+                  Assistant
+                </Button>
+              ) : null}
+              {isProjectIndexRoute ? (
+                <Button size="sm" onClick={() => setCreateDialogOpen(true)}>
+                  <Plus className="size-4" />
+                  Create project
+                </Button>
+              ) : null}
+            </div>
           </div>
         </header>
 
@@ -355,9 +411,33 @@ function AppLayoutInner() {
             </Alert>
           ) : null}
 
-          <div className="min-h-0 flex-1 overflow-hidden">
-            <Outlet />
-          </div>
+          {/* The main panel is always mounted in the same tree position so
+              toggling the dock never unmounts the page (which would wipe
+              in-flight UI state like generation indicators). */}
+          <Group orientation="horizontal" className="min-h-0 flex-1">
+            <Panel
+              id="layout-main"
+              minSize="40%"
+              defaultSize="64%"
+              className="min-h-0 overflow-hidden"
+            >
+              <Outlet />
+            </Panel>
+            {dockOpen ? (
+              <>
+                <Separator className="w-1.5 shrink-0 bg-border transition-colors hover:bg-foreground/20" />
+                <Panel
+                  id="layout-assistant"
+                  minSize="24%"
+                  defaultSize="36%"
+                  maxSize="55%"
+                  className="min-h-0 overflow-hidden"
+                >
+                  <AssistantDock />
+                </Panel>
+              </>
+            ) : null}
+          </Group>
         </div>
       </SidebarInset>
 

@@ -13,10 +13,12 @@ import {
   buildSystemPrompt,
   parsePointDetails,
   parseProfileCompleteMarker,
+  parseProfileProjectAdds,
   parseTopicUpdates,
   stripTopicMarkers,
 } from "../../prompts/chat";
-import { upsertPointDetail } from "../projects/profile";
+import { addProfileProject, upsertPointDetail } from "../projects/profile";
+import { listLatestReviews } from "../tasks/reviewStore";
 import { topicPath, writeTopicFile } from "../topics";
 import {
   getInterviewAgenda,
@@ -111,16 +113,23 @@ export function buildSendMessageStream(
       createdAt: now(),
     });
 
-    const [resumeText, profile, topics, agenda] = await Promise.all([
+    const [resumeText, profile, topics, agenda, tailoringReviews] = await Promise.all([
       getResumeText(projectId),
       getProfile(projectId),
       loadTopicsWithContent(projectId),
       threadScope === "coach"
         ? getInterviewAgenda(projectId, threadId)
         : Promise.resolve(undefined),
+      listLatestReviews(projectId),
     ]);
 
-    const systemPrompt = buildSystemPrompt({ resumeText, profile, topics, agenda });
+    const systemPrompt = buildSystemPrompt({
+      resumeText,
+      profile,
+      topics,
+      agenda,
+      tailoringReviews,
+    });
 
     const history = await db
       .select()
@@ -305,6 +314,25 @@ export function buildSendMessageStream(
             turnId,
             threadId,
             source: "interview_point_detail",
+          });
+        }
+
+        let projectsAdded = 0;
+        for (const proj of parseProfileProjectAdds(fullResponse)) {
+          const updated = await addProfileProject(projectId, proj);
+          if (updated) projectsAdded += 1;
+        }
+        if (projectsAdded > 0) {
+          logInfo("chat profile-projects added", {
+            turnId,
+            projectId,
+            threadId,
+            count: projectsAdded,
+          });
+          await writeProjectRuntimeEvent(projectId, "profile.updated", {
+            turnId,
+            threadId,
+            source: "chat_profile_project_add",
           });
         }
       }

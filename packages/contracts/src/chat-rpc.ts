@@ -19,6 +19,7 @@ export const ChatThreadSchema = Schema.Struct({
   status: Schema.Literals(["active", "archived"]),
   createdAt: Schema.String,
   updatedAt: Schema.String,
+  anchor: Schema.optionalKey(Schema.Struct({ type: Schema.String, id: Schema.String })),
 });
 
 export const InsightCardSchema = Schema.Struct({

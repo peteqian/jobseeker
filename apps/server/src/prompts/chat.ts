@@ -14,11 +14,28 @@ export interface InterviewAgenda {
   currentClaimId?: string;
 }
 
+/** Latest recruiter verdict for a tailored document, shown to the assistant. */
+export interface TailoringReviewContext {
+  jobTitle: string;
+  company: string;
+  kind: string;
+  /** Presentation quality of the document given the candidate's real background. */
+  score: number;
+  /** Candidate-vs-role fit; null on reviews from before the fit/presentation split. */
+  fitScore: number | null;
+  shortlist: string | null;
+  /** Unfixable candidate-vs-role mismatches stated as facts. */
+  gaps: string[];
+  issues: { severity: string; issue: string; fix: string }[];
+  createdAt: string;
+}
+
 interface PromptContext {
   resumeText: string | null;
   profile: StructuredProfile | null;
   topics: TopicWithContent[];
   agenda?: InterviewAgenda;
+  tailoringReviews?: TailoringReviewContext[];
 }
 
 export function buildSystemPrompt(ctx: PromptContext): string {
@@ -47,6 +64,18 @@ When you believe you have enough evidence to populate all of the above fields co
 <!-- profile-complete -->
 
 Only emit this marker once you are genuinely confident the profile is complete. Do not emit it prematurely.
+
+## Editing the profile
+
+When the user asks you to add a side or learning project to their profile — or the two of you clearly establish a new project worth recording — add it by emitting this marker at the very end of your response (after any topic markers):
+
+<!-- profile-project-add: {"name": "Project name", "description": "1-3 sentence description of what it is and what the user did", "skillsUsed": ["Skill A", "Skill B"], "url": "https://optional-link"} -->
+
+Rules for profile-project-add markers:
+- Only add a project the user actually described. Do not invent details.
+- The content must be valid JSON; use \\n for any newlines inside string values. url is optional.
+- In your conversational text, confirm to the user what you added.
+- If a project with the same name already exists, this updates it in place.
 
 ## How topics work
 
@@ -98,6 +127,16 @@ ${topicBlocks.join("\n\n")}
 
   if (ctx.agenda && ctx.agenda.claims.length > 0) {
     parts.push(buildAgendaSection(ctx.agenda));
+  }
+
+  if (ctx.tailoringReviews && ctx.tailoringReviews.length > 0) {
+    parts.push(`## Tailored document reviews
+
+The user generates AI-tailored resumes and cover letters per job; each one is screened by an automated recruiter review with two separate judgments: \`score\` is presentation quality — how well the document sells the user's real background (editable, target 90+) — and \`fitScore\` is candidate-vs-role fit from facts alone (NOT fixable by editing; the \`gaps\` list says why). \`shortlist\` is the recruiter's advance/pass call. When the user asks about a document or score, keep these apart: presentation issues are fixed by editing; fit gaps mean the job itself is a stretch — coach them on job choice or on genuinely closing the gap, never on stretching the resume.
+
+<tailoring-reviews>
+${JSON.stringify(ctx.tailoringReviews, null, 2)}
+</tailoring-reviews>`);
   }
 
   return parts.join("\n\n");
@@ -229,12 +268,47 @@ export function parsePointDetails(text: string): ParsedPointDetail[] {
   return results;
 }
 
+const PROFILE_PROJECT_ADD_PATTERN = /<!--\s*profile-project-add:\s*(\{[\s\S]*?\})\s*-->/g;
+
+export interface ParsedProfileProject {
+  name: string;
+  description: string;
+  skillsUsed: string[];
+  url?: string;
+}
+
+/** Extracts profile-project-add markers the assistant emits to edit the profile. */
+export function parseProfileProjectAdds(text: string): ParsedProfileProject[] {
+  const results: ParsedProfileProject[] = [];
+
+  for (const match of text.matchAll(PROFILE_PROJECT_ADD_PATTERN)) {
+    try {
+      const raw = JSON.parse(match[1]) as Record<string, unknown>;
+      const name = typeof raw.name === "string" ? raw.name.trim() : "";
+      if (!name) continue;
+      results.push({
+        name,
+        description: typeof raw.description === "string" ? raw.description : "",
+        skillsUsed: Array.isArray(raw.skillsUsed)
+          ? raw.skillsUsed.filter((v): v is string => typeof v === "string")
+          : [],
+        url: typeof raw.url === "string" && raw.url ? raw.url : undefined,
+      });
+    } catch {
+      // Skip malformed markers; a bad marker must not break the turn.
+    }
+  }
+
+  return results;
+}
+
 export function stripTopicMarkers(text: string): string {
   return text
     .replace(TOPIC_UPDATE_PATTERN, "")
     .replace(TOPIC_CREATE_PATTERN, "")
     .replace(PROFILE_COMPLETE_PATTERN, "")
     .replace(POINT_DETAIL_PATTERN, "")
+    .replace(PROFILE_PROJECT_ADD_PATTERN, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }

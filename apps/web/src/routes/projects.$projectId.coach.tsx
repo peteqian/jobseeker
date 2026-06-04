@@ -2,20 +2,12 @@ import type { ChatThread, ResumeVersion } from "@jobseeker/contracts";
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import {
-  FilePlus2,
-  FileSearch,
-  FileText,
-  MessagesSquare,
-  Plus,
-  Trash2,
-  Upload,
-} from "lucide-react";
+import { FilePlus2, FileSearch, FileText, MessagesSquare, Trash2, Upload } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ChatPanel } from "@/components/chat/chat-panel";
+import { ConversationsPane } from "@/components/chat/conversations-pane";
 import { ProviderModelPicker } from "@/components/chat/provider-model-picker";
 import { useModelChoice } from "@/hooks/use-model-choice";
 import { appendThreadToCache, removeThreadFromCache } from "@/lib/chat-cache";
@@ -31,10 +23,10 @@ import { coachKeys, projectsKeys } from "@/lib/query-keys";
 import { projectRouteId } from "@/lib/project-route";
 import { getResumeDoc } from "@/lib/project";
 import { cn } from "@/lib/utils";
-import { useChat } from "@/hooks/use-chat";
 import { useAnalysisStream } from "@/hooks/use-analysis-stream";
 import { useProjectEvents } from "@/hooks/use-project-events";
 import { useShellHeaderMeta } from "@/providers/shell-header-context";
+import { useAssistantPageAnchors } from "@/providers/assistant-dock-context";
 import { useProjectStore } from "@/stores/project-store";
 import { createThread, deleteThread } from "@/rpc/chat-client";
 import {
@@ -57,6 +49,7 @@ import { PointExpansions } from "./projects.$projectId.coach/-components/point-e
 
 const EMPTY_THREADS: ChatThread[] = [];
 const EMPTY_VERSIONS: ResumeVersion[] = [];
+const COACH_ANCHOR_TYPES = ["claim", "gap"];
 
 export const Route = createFileRoute("/projects/$projectId/coach")({
   loader: async ({ context, params }) => {
@@ -108,6 +101,7 @@ function ResumeStudioPage() {
     [],
   );
   useShellHeaderMeta(shellHeader);
+  useAssistantPageAnchors(COACH_ANCHOR_TYPES);
 
   const { providers, selection, setSelection } = useModelChoice(projectId, "coach");
   const threads = useQuery(chatThreadsQueryOptions(projectId, "coach")).data ?? EMPTY_THREADS;
@@ -168,13 +162,6 @@ function ResumeStudioPage() {
   const handleComplete = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: projectsKeys.detail(projectId) });
   }, [projectId, queryClient]);
-
-  const { messages, streamingContent, isStreaming, error, send, interrupt } = useChat({
-    projectId,
-    threadId: activeThreadId ?? "",
-    selection,
-    onComplete: handleComplete,
-  });
 
   const isBusy =
     uploadResume.isPending ||
@@ -535,113 +522,26 @@ function ResumeStudioPage() {
 
       {/* ── Conversations tab ───────────────────────── */}
       <TabsContent value="conversations" className="min-h-0 flex-1 overflow-hidden">
-        <div className="flex h-full min-h-0">
-          {/* Sessions nav — the context of each conversation */}
-          <aside className="flex w-60 shrink-0 flex-col border-r bg-muted/20">
-            <div className="flex items-center justify-between px-3 py-2.5">
-              <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                Conversations
-              </span>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label="New session"
-                onClick={() => void handleNewThread()}
-              >
-                <Plus className="size-4" />
-              </Button>
-            </div>
-            <div className="flex-1 overflow-y-auto px-2 pb-2">
-              {threads.length === 0 ? (
-                <p className="px-2 py-1 text-xs text-muted-foreground">No conversations yet.</p>
-              ) : (
-                threads.map((t) => (
-                  <div
-                    key={t.id}
-                    className={cn(
-                      "group/row mb-1 flex items-center gap-1 rounded-md pr-1",
-                      t.id === activeThreadId ? "bg-accent" : "hover:bg-accent/50",
-                    )}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => setActiveThreadId(t.id)}
-                      className="flex min-w-0 flex-1 flex-col gap-0.5 px-2 py-1.5 text-left"
-                    >
-                      <span className="line-clamp-2 text-xs font-medium leading-snug">
-                        {t.title}
-                      </span>
-                      <span className="text-[10px] text-muted-foreground">
-                        {new Date(t.updatedAt).toLocaleString(undefined, {
-                          month: "short",
-                          day: "numeric",
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      aria-label={`Delete ${t.title}`}
-                      onClick={() => void handleDeleteThread(t.id)}
-                      className="hidden shrink-0 rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive group-hover/row:block"
-                    >
-                      <Trash2 className="size-3.5" />
-                    </button>
-                  </div>
-                ))
-              )}
-            </div>
-          </aside>
-
-          {/* Active conversation */}
-          {activeThreadId ? (
-            <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-              <div className="flex flex-col gap-0.5 border-b px-4 py-2">
-                <div className="flex items-center gap-2">
-                  <MessagesSquare className="size-4 shrink-0 text-muted-foreground" />
-                  <span className="truncate text-sm font-medium">
-                    {threads.find((t) => t.id === activeThreadId)?.title ?? "Interview"}
-                  </span>
-                </div>
-                <span className="pl-6 text-[11px] text-muted-foreground">
-                  Memory stays with the first model used here — switching the model restarts the
-                  conversation context.
-                </span>
+        <ConversationsPane
+          projectId={projectId}
+          threads={threads}
+          activeThreadId={activeThreadId}
+          onSelectThread={setActiveThreadId}
+          onNewThread={() => void handleNewThread()}
+          onDeleteThread={(id) => void handleDeleteThread(id)}
+          providers={providers}
+          selection={selection}
+          onSelectionChange={setSelection}
+          onComplete={handleComplete}
+          emptyHint="Sharpen a resume point from the Review tab, or start a new conversation to be interviewed about your experience."
+          bannerSlot={
+            selectedClaim ? (
+              <div className="border-b bg-muted/20">
+                <SuggestionsPanel claim={selectedClaim} suggestions={suggestions} />
               </div>
-              {/* Rewrite suggestions for the point this conversation is sharpening. */}
-              {selectedClaim ? (
-                <div className="border-b bg-muted/20">
-                  <SuggestionsPanel claim={selectedClaim} suggestions={suggestions} />
-                </div>
-              ) : null}
-              <ChatPanel
-                messages={messages}
-                streamingContent={streamingContent}
-                isStreaming={isStreaming}
-                error={error}
-                onSend={send}
-                onInterrupt={interrupt}
-                providers={providers}
-                selection={selection}
-                onSelectionChange={setSelection}
-                className="min-h-0 flex-1"
-              />
-            </div>
-          ) : (
-            <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
-              <MessagesSquare className="size-8 text-muted-foreground" />
-              <p className="max-w-xs text-sm text-muted-foreground">
-                Sharpen a resume point from the Review tab, or start a new conversation to be
-                interviewed about your experience.
-              </p>
-              <Button size="sm" onClick={() => void handleNewThread()}>
-                <Plus className="size-4" />
-                New conversation
-              </Button>
-            </div>
-          )}
-        </div>
+            ) : null
+          }
+        />
       </TabsContent>
 
       <RunDeepReviewModal

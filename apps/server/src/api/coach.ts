@@ -147,6 +147,11 @@ async function resolveAnchorProject(
     if (!review) return null;
     return { projectId: review.projectId, title: claim.text };
   }
+  if (anchorType === "profile-section") {
+    // Profile sections aren't backed by a review row; the anchorId is the
+    // projectId itself, so one profile conversation exists per project.
+    return { projectId: anchorId, title: "Profile" };
+  }
   if (anchorType === "gap") {
     const gap = (await db.select().from(coachGaps).where(eq(coachGaps.id, anchorId)).get()) as
       | CoachGap

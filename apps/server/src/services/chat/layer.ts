@@ -1,7 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import type {
   ChatModelSelection,
   ChatScope,
@@ -13,7 +13,13 @@ import type {
 import { ProviderServiceLive } from "../../provider/layers/providerService";
 import { ProviderService } from "../../provider/services/providerService";
 import { db } from "../../db";
-import { chatThreads, insightCards, projects, topicFiles } from "../../db/schema";
+import {
+  chatThreads,
+  coachThreadAnchors,
+  insightCards,
+  projects,
+  topicFiles,
+} from "../../db/schema";
 import { makeId } from "../../lib/ids";
 import { readTopicFile, topicPath, writeTopicFile } from "../topics";
 import {
@@ -99,7 +105,20 @@ export const ChatServiceLive = Layer.effect(
             .where(and(eq(chatThreads.projectId, projectId), eq(chatThreads.scope, scope)))
             .orderBy(asc(chatThreads.createdAt))
             .all();
-          return rows.map(toThread);
+          const anchors = await db
+            .select()
+            .from(coachThreadAnchors)
+            .where(
+              inArray(
+                coachThreadAnchors.threadId,
+                rows.map((row) => row.id),
+              ),
+            )
+            .all();
+          const anchorByThread = new Map(
+            anchors.map((a) => [a.threadId, { type: a.anchorType, id: a.anchorId }]),
+          );
+          return rows.map((row) => toThread(row, anchorByThread.get(row.id)));
         }),
 
       createThread: (projectId: string, scope: ChatScope, title?: string) =>

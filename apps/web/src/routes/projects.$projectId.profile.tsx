@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { RefreshCw } from "lucide-react";
+import { RefreshCw, Sparkles } from "lucide-react";
 import { createFileRoute, Link } from "@tanstack/react-router";
 
 import { Button } from "@/components/ui/button";
@@ -7,13 +7,17 @@ import { buttonVariants } from "@/components/ui/button-variants";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 import { useModelChoice } from "@/hooks/use-model-choice";
+import { useProjectEvents } from "@/hooks/use-project-events";
 import { useStartTask } from "@/hooks/use-project-mutations";
 import { getResumeDoc } from "@/lib/project";
 import { projectRouteId } from "@/lib/project-route";
 import { useShellHeaderActions, useShellHeaderMeta } from "@/providers/shell-header-context";
+import { useAssistantDock, useAssistantPageAnchors } from "@/providers/assistant-dock-context";
 import { useProjectStore } from "@/stores/project-store";
 import { ProfileEditor, type ProfileEditorHandle } from "./projects.$projectId.profile/-editor";
 import { ProfileModelSettings } from "./projects.$projectId.profile/-model-settings";
+
+const PROFILE_ANCHOR_TYPES = ["profile-section"];
 
 export const Route = createFileRoute("/projects/$projectId/profile")({
   component: ProfilePage,
@@ -47,6 +51,17 @@ function ProfilePage() {
     });
   }, [modelSelection, projectId, startTask]);
 
+  const { requestAnchored } = useAssistantDock();
+  useAssistantPageAnchors(PROFILE_ANCHOR_TYPES);
+  // Subscribe to project events so an assistant-driven profile.updated (e.g. the
+  // dock adding a project) refetches and re-binds the editor live.
+  useProjectEvents(projectId ?? "");
+
+  const askAboutProfile = useCallback(() => {
+    if (!projectId) return;
+    requestAnchored({ anchorType: "profile-section", anchorId: projectId, title: "Profile" });
+  }, [projectId, requestAnchored]);
+
   useShellHeaderMeta({
     title: "Profile",
     description: "Builds upon your active resume and coach interaction.",
@@ -62,6 +77,10 @@ function ProfilePage() {
           selection={modelSelection}
           onSelectionChange={setModelSelection}
         />
+        <Button type="button" size="sm" variant="outline" onClick={askAboutProfile}>
+          <Sparkles className="size-4" />
+          Ask AI
+        </Button>
         <Button type="button" size="sm" variant="outline" onClick={rebuild} disabled={isRebuilding}>
           <RefreshCw className={`size-4 ${isRebuilding ? "animate-spin" : ""}`} />
           {isRebuilding ? "Building..." : currentProfile ? "Rebuild" : "Build"}
@@ -80,6 +99,7 @@ function ProfilePage() {
       </div>
     );
   }, [
+    askAboutProfile,
     editorDirty,
     editorSaving,
     isRebuilding,

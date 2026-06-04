@@ -4,6 +4,7 @@ import {
   normalizeExperience,
   normalizeWorkRights,
   type ProfilePointDetail,
+  type ProfileProject,
   type StructuredProfile,
 } from "@jobseeker/contracts";
 
@@ -70,6 +71,45 @@ export async function upsertPointDetail(
     matchIndex >= 0 ? details.map((d, i) => (i === matchIndex ? detail : d)) : [...details, detail];
 
   const next: StructuredProfile = { ...profile, pointDetails: nextDetails, updatedAt: timestamp };
+  await upsertProjectProfile(projectId, next);
+  await writeProfileFile(projectId, next);
+  return next;
+}
+
+/**
+ * Adds (or updates, by case-insensitive name) a project on the structured
+ * profile — the seam the docked assistant uses to edit the profile. Returns the
+ * updated profile, or null when no profile exists yet.
+ */
+export async function addProfileProject(
+  projectId: string,
+  input: { name: string; description: string; skillsUsed: string[]; url?: string },
+): Promise<StructuredProfile | null> {
+  const profile = await readProjectProfile(projectId);
+  if (!profile) return null;
+
+  const list = profile.projects ?? [];
+  const matchIndex = list.findIndex(
+    (p) => p.name.trim().toLowerCase() === input.name.trim().toLowerCase(),
+  );
+  const existing = matchIndex >= 0 ? list[matchIndex] : null;
+
+  const entry: ProfileProject = {
+    id: existing?.id ?? makeId("pproj"),
+    name: input.name.trim(),
+    description: input.description.trim(),
+    skillsUsed: input.skillsUsed,
+    ...(input.url ? { url: input.url } : {}),
+  };
+
+  const nextProjects =
+    matchIndex >= 0 ? list.map((p, i) => (i === matchIndex ? entry : p)) : [...list, entry];
+
+  const next: StructuredProfile = {
+    ...profile,
+    projects: nextProjects,
+    updatedAt: new Date().toISOString(),
+  };
   await upsertProjectProfile(projectId, next);
   await writeProfileFile(projectId, next);
   return next;

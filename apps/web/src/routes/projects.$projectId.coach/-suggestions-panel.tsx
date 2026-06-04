@@ -1,5 +1,8 @@
-import { ArrowRight } from "lucide-react";
+import { useState } from "react";
+import { ArrowRight, Lightbulb, X } from "lucide-react";
 import type { CoachClaim, CoachSuggestion } from "@jobseeker/contracts";
+
+import { Button } from "@/components/ui/button";
 
 interface SuggestionsPanelProps {
   claim: CoachClaim | null;
@@ -7,6 +10,8 @@ interface SuggestionsPanelProps {
 }
 
 export function SuggestionsPanel({ claim, suggestions }: SuggestionsPanelProps) {
+  const [hidden, setHidden] = useState(false);
+
   if (!claim) {
     return (
       <div className="p-4 text-sm text-muted-foreground">Select a claim to see suggestions.</div>
@@ -15,13 +20,35 @@ export function SuggestionsPanel({ claim, suggestions }: SuggestionsPanelProps) 
 
   const filtered = suggestions.filter((s) => s.claimId === claim.id);
 
+  if (hidden) {
+    return (
+      <div className="flex justify-end px-4 py-1.5">
+        <Button variant="ghost" size="sm" onClick={() => setHidden(false)}>
+          <Lightbulb className="size-4" />
+          Show suggestions
+        </Button>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col gap-3 p-4">
-      <div>
-        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          Suggestions for
-        </p>
-        <p className="mt-1 text-sm font-medium text-foreground">{claim.text}</p>
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Suggestions for
+          </p>
+          <p className="mt-1 text-sm font-medium text-foreground">{claim.text}</p>
+        </div>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label="Hide suggestions"
+          className="shrink-0"
+          onClick={() => setHidden(true)}
+        >
+          <X className="size-4" />
+        </Button>
       </div>
 
       {filtered.length === 0 ? (
