@@ -12,6 +12,7 @@ export interface ChatThread {
   status: ChatThreadStatus;
   createdAt: string;
   updatedAt: string;
+  anchor?: { type: string; id: string };
 }
 
 export type InsightCategory = "positioning" | "evidence" | "reframing" | "gap" | "other";

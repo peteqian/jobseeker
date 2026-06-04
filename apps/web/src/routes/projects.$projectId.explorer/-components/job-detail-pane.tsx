@@ -348,7 +348,7 @@ function DocumentTab({
   generateLabel: string;
   editorKind: "resume" | "cover_letter";
   pdfName: string;
-  pdfVariant?: "cover-letter";
+  pdfVariant?: import("@/lib/resume-pdf").PdfVariant;
   jobId: string;
   projectSlug: string;
   onGenerate: (type: GenerateType) => void;
