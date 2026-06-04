@@ -2,6 +2,7 @@ import { asc, desc, eq } from "drizzle-orm";
 import type {
   ChatMessage,
   InsightCard,
+  JobApplication,
   JobMatch,
   JobRecord,
   PendingQuestion,
@@ -24,6 +25,7 @@ import {
   documents,
   explorerConfigs,
   insightCards,
+  jobApplications,
   jobMatches,
   jobs,
   profiles,
@@ -38,6 +40,7 @@ import {
 } from "../../db/schema";
 import { createProjectSlug } from "../../lib/paths";
 import { createEmptyQuestionCardSections, readQuestionCardFile } from "../questions";
+import { parseShortlist, parseStringArray } from "../tasks/reviewStore";
 import { defaultExplorerConfig, mapExplorerConfigRow } from "./explorerConfig";
 
 /**
@@ -67,6 +70,7 @@ export async function buildProjectSnapshot(
     questionHistoryList,
     jobsList,
     matches,
+    jobApplicationRows,
     tailoringReviewRows,
     tailoringReviewHistoryRows,
     profile,
@@ -118,6 +122,7 @@ export async function buildProjectSnapshot(
       .all(),
     db.select().from(jobs).where(eq(jobs.projectId, projectId)).orderBy(asc(jobs.createdAt)).all(),
     db.select().from(jobMatches).where(eq(jobMatches.projectId, projectId)).all(),
+    db.select().from(jobApplications).where(eq(jobApplications.projectId, projectId)).all(),
     db.select().from(tailoringReviews).where(eq(tailoringReviews.projectId, projectId)).all(),
     db
       .select()
@@ -258,6 +263,7 @@ export async function buildProjectSnapshot(
       summary: job.summary,
       salary: job.salary ?? undefined,
       createdAt: job.createdAt,
+      expiredAt: job.expiredAt ?? null,
     })),
     jobMatches: matches.map((match) => ({
       jobId: match.jobId,
@@ -267,12 +273,24 @@ export async function buildProjectSnapshot(
       reasons: JSON.parse(match.reasonsJson) as string[],
       gaps: JSON.parse(match.gapsJson) as string[],
     })) as JobMatch[],
+    jobApplications: jobApplicationRows.map((row) => ({
+      projectId: row.projectId,
+      jobId: row.jobId,
+      status: row.status as JobApplication["status"],
+      appliedAt: row.appliedAt,
+      interviewRounds: row.interviewRounds,
+      notes: row.notes ?? undefined,
+      updatedAt: row.updatedAt,
+    })),
     tailoringReviews: tailoringReviewRows.map((row) => ({
       projectId: row.projectId,
       jobId: row.jobId,
       kind: row.kind,
       documentId: row.documentId,
       score: row.score,
+      fitScore: row.fitScore,
+      shortlist: parseShortlist(row.shortlist),
+      gaps: parseStringArray(row.gapsJson),
       issues: JSON.parse(row.issuesJson) as TailoringIssue[],
       createdAt: row.createdAt,
     })) as TailoringReview[],
@@ -282,6 +300,9 @@ export async function buildProjectSnapshot(
       kind: row.kind,
       documentId: row.documentId,
       score: row.score,
+      fitScore: row.fitScore,
+      shortlist: parseShortlist(row.shortlist),
+      gaps: parseStringArray(row.gapsJson),
       issues: JSON.parse(row.issuesJson) as TailoringIssue[],
       createdAt: row.createdAt,
     })) as TailoringReviewHistoryEntry[],

@@ -115,6 +115,10 @@ export const jobs = sqliteTable(
     // apply fit judge can reuse it without a second page fetch.
     descriptionText: text("description_text"),
     createdAt: text("created_at").notNull(),
+    // Set by the daily expiry check when the listing is gone; null = live.
+    expiredAt: text("expired_at"),
+    // Last time the expiry check fetched this job's URL (any outcome).
+    lastExpiryCheckAt: text("last_expiry_check_at"),
   },
   (table) => [
     uniqueIndex("uq_jobs_project_source_url").on(table.projectId, table.source, table.url),
@@ -158,6 +162,24 @@ export const jobMatches = sqliteTable(
   (table) => [primaryKey({ columns: [table.jobId, table.projectId] })],
 );
 
+export const jobApplications = sqliteTable(
+  "job_applications",
+  {
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    jobId: text("job_id")
+      .notNull()
+      .references(() => jobs.id, { onDelete: "cascade" }),
+    status: text("status").notNull(),
+    appliedAt: text("applied_at").notNull(),
+    interviewRounds: integer("interview_rounds").notNull().default(0),
+    notes: text("notes"),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.projectId, table.jobId] })],
+);
+
 export const tailoringReviews = sqliteTable(
   "tailoring_reviews",
   {
@@ -170,6 +192,9 @@ export const tailoringReviews = sqliteTable(
     kind: text("kind").notNull(),
     documentId: text("document_id").notNull(),
     score: real("score").notNull(),
+    fitScore: real("fit_score"),
+    shortlist: text("shortlist"),
+    gapsJson: text("gaps_json"),
     issuesJson: text("issues_json").notNull(),
     createdAt: text("created_at").notNull(),
   },
@@ -189,6 +214,9 @@ export const tailoringReviewHistory = sqliteTable(
     kind: text("kind").notNull(),
     documentId: text("document_id").notNull(),
     score: real("score").notNull(),
+    fitScore: real("fit_score"),
+    shortlist: text("shortlist"),
+    gapsJson: text("gaps_json"),
     issuesJson: text("issues_json").notNull(),
     createdAt: text("created_at").notNull(),
   },

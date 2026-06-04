@@ -1,10 +1,11 @@
 import { Hono } from "hono";
-import { desc, eq } from "drizzle-orm";
-import type { StructuredProfile } from "@jobseeker/contracts";
+import { and, desc, eq } from "drizzle-orm";
+import type { StructuredProfile, UpdateJobApplicationInput } from "@jobseeker/contracts";
 
 import { db } from "../db";
-import { documents, jobMatches, jobs, profiles, projects } from "../db/schema";
-import { createProject, ensureProjectSlugs } from "../services/projects/bootstrap";
+import { documents, jobApplications, jobMatches, jobs, profiles, projects } from "../db/schema";
+import { extractJobDescription } from "../services/explorer/jobDescriptionText";
+import { createProject, deleteProject, ensureProjectSlugs } from "../services/projects/bootstrap";
 import { writeProfileFile } from "../services/projects/profile";
 import { buildProjectSnapshot, isDefined } from "../services/projects/snapshot";
 
@@ -55,6 +56,17 @@ export function registerProjectRoutes(app: Hono) {
     }
 
     return c.json(snapshot);
+  });
+
+  app.delete("/api/projects/:projectId", async (c) => {
+    const projectId = c.req.param("projectId");
+    const deleted = await deleteProject(projectId);
+
+    if (!deleted) {
+      return c.json({ error: "Project not found." }, 404);
+    }
+
+    return c.json({ ok: true });
   });
 
   app.get("/api/projects/:projectId/documents/:documentId", async (c) => {
@@ -136,6 +148,23 @@ export function registerProjectRoutes(app: Hono) {
     return c.json(snapshot);
   });
 
+  // Full crawled JD on demand — kept out of the snapshot because descriptions
+  // are large and the snapshot is refetched on most runtime events.
+  app.get("/api/projects/:projectId/jobs/:jobId/description", async (c) => {
+    const { projectId, jobId } = c.req.param();
+
+    const job = await db.select().from(jobs).where(eq(jobs.id, jobId)).get();
+
+    if (!job || job.projectId !== projectId) {
+      return c.json({ error: "Job not found." }, 404);
+    }
+
+    // Re-clean on read so rows crawled before the cleaner existed display well.
+    return c.json({
+      description: job.descriptionText ? extractJobDescription(job.descriptionText) : null,
+    });
+  });
+
   app.delete("/api/projects/:projectId/jobs/:jobId", async (c) => {
     const { projectId, jobId } = c.req.param();
 
@@ -148,9 +177,67 @@ export function registerProjectRoutes(app: Hono) {
 
     // Delete job matches first (cascade should handle this, but being explicit)
     await db.delete(jobMatches).where(eq(jobMatches.jobId, jobId));
+    await db.delete(jobApplications).where(eq(jobApplications.jobId, jobId));
 
     // Delete the job
     await db.delete(jobs).where(eq(jobs.id, jobId));
+
+    const snapshot = await buildProjectSnapshot(projectId);
+    if (!snapshot) {
+      return c.json({ error: "Project not found." }, 404);
+    }
+
+    return c.json(snapshot);
+  });
+
+  app.put("/api/projects/:projectId/jobs/:jobId/application", async (c) => {
+    const { projectId, jobId } = c.req.param();
+    const input = (await c.req.json()) as UpdateJobApplicationInput;
+
+    const job = await db.select().from(jobs).where(eq(jobs.id, jobId)).get();
+    if (!job || job.projectId !== projectId) {
+      return c.json({ error: "Job not found." }, 404);
+    }
+
+    const timestamp = now();
+    await db
+      .insert(jobApplications)
+      .values({
+        projectId,
+        jobId,
+        status: input.status,
+        appliedAt: timestamp,
+        interviewRounds: input.interviewRounds ?? 0,
+        notes: input.notes ?? null,
+        updatedAt: timestamp,
+      })
+      .onConflictDoUpdate({
+        target: [jobApplications.projectId, jobApplications.jobId],
+        set: {
+          status: input.status,
+          ...(input.interviewRounds !== undefined
+            ? { interviewRounds: input.interviewRounds }
+            : {}),
+          ...(input.notes !== undefined ? { notes: input.notes } : {}),
+          updatedAt: timestamp,
+        },
+      })
+      .run();
+
+    const snapshot = await buildProjectSnapshot(projectId);
+    if (!snapshot) {
+      return c.json({ error: "Project not found." }, 404);
+    }
+
+    return c.json(snapshot);
+  });
+
+  app.delete("/api/projects/:projectId/jobs/:jobId/application", async (c) => {
+    const { projectId, jobId } = c.req.param();
+
+    await db
+      .delete(jobApplications)
+      .where(and(eq(jobApplications.projectId, projectId), eq(jobApplications.jobId, jobId)));
 
     const snapshot = await buildProjectSnapshot(projectId);
     if (!snapshot) {

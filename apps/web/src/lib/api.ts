@@ -17,6 +17,7 @@ import type {
   ProjectSnapshot,
   TaskRecord,
   UpdateCoachNextStepInput,
+  UpdateJobApplicationInput,
   UpdateQuestionCardInput,
   UpdateExplorerConfigInput,
 } from "@jobseeker/contracts";
@@ -92,6 +93,10 @@ export async function getProject(projectId: string): Promise<ProjectSnapshot> {
 
 export async function createProject(title: string): Promise<ProjectSnapshot> {
   return post<ProjectSnapshot>("/api/projects", { title });
+}
+
+export async function deleteProject(projectId: string): Promise<void> {
+  await del(`/api/projects/${projectId}`);
 }
 
 export async function uploadProjectResume(
@@ -190,6 +195,21 @@ export async function deleteProjectJob(projectId: string, jobId: string): Promis
   return del<ProjectSnapshot>(`/api/projects/${projectId}/jobs/${jobId}`);
 }
 
+export async function updateJobApplication(
+  projectId: string,
+  jobId: string,
+  input: UpdateJobApplicationInput,
+): Promise<ProjectSnapshot> {
+  return put<ProjectSnapshot>(`/api/projects/${projectId}/jobs/${jobId}/application`, input);
+}
+
+export async function clearJobApplication(
+  projectId: string,
+  jobId: string,
+): Promise<ProjectSnapshot> {
+  return del<ProjectSnapshot>(`/api/projects/${projectId}/jobs/${jobId}/application`);
+}
+
 export async function updateDocument(
   projectId: string,
   documentId: string,
@@ -200,6 +220,14 @@ export async function updateDocument(
     input,
   );
   return response.document;
+}
+
+export async function getJobDescription(projectId: string, jobId: string): Promise<string | null> {
+  return (
+    await get<{ description: string | null }>(
+      `/api/projects/${projectId}/jobs/${jobId}/description`,
+    )
+  ).description;
 }
 
 export async function getProjectEvents(projectId: string): Promise<RuntimeEvent[]> {

@@ -40,6 +40,8 @@ export interface ExplorerSearchConfig {
   jobLimit: number;
   /** Run queries one at a time (default) or fan out in parallel. */
   runMode?: ExplorerRunMode;
+  /** Re-check found job URLs daily and mark listings that have expired. */
+  checkExpiredDaily?: boolean;
 }
 
 export interface ExplorerConfigRecord {
@@ -93,6 +95,8 @@ export interface JobRecord {
   summary: string;
   salary?: string;
   createdAt: string;
+  /** Set when the daily expiry check found the listing no longer available. */
+  expiredAt?: string | null;
 }
 
 /**
@@ -112,6 +116,29 @@ export interface JobMatch {
   gaps: string[];
 }
 
+/**
+ * Where a tracked application sits in the hiring funnel. Set by the user once
+ * they actually apply; jobs without a row are not yet tracked.
+ */
+export type ApplicationStatus = "applied" | "interviewing" | "offer" | "accepted" | "rejected";
+
+export interface JobApplication {
+  projectId: string;
+  jobId: string;
+  status: ApplicationStatus;
+  appliedAt: string;
+  /** Interview rounds completed (or scheduled) so far. */
+  interviewRounds: number;
+  notes?: string;
+  updatedAt: string;
+}
+
+export interface UpdateJobApplicationInput {
+  status: ApplicationStatus;
+  interviewRounds?: number;
+  notes?: string;
+}
+
 export interface TailoringIssue {
   severity: "high" | "medium" | "low";
   issue: string;
@@ -119,8 +146,21 @@ export interface TailoringIssue {
 }
 
 /**
+ * The recruiter's screening call: would they advance this candidate for this
+ * job? Mirrors how a real screen ends — not with a number, but a decision.
+ */
+export type TailoringShortlist = "strong_yes" | "yes" | "maybe" | "no";
+
+/**
  * A recruiter's verdict on a tailored document, stored per job + kind and
  * surfaced next to the document so the user sees what was flagged.
+ *
+ * Two separate judgments, the way a real recruiter screens:
+ * - `score` (presentation): given the candidate's true background, how well
+ *   does the document sell it? Fully fixable by editing — the revise loop
+ *   chases this.
+ * - `fitScore`: how well the candidate's actual background matches the role.
+ *   Editing cannot move it; it informs job choice, not revision.
  */
 export interface TailoringReview {
   projectId: string;
@@ -128,8 +168,14 @@ export interface TailoringReview {
   /** Matches the tailoring TaskType: "resume_tailoring" | "cover_letter_tailoring". */
   kind: string;
   documentId: string;
-  /** 0-100 interview-readiness for this job. */
+  /** 0-100 presentation quality of the document given the candidate's real background. */
   score: number;
+  /** 0-100 candidate-vs-role fit from facts alone. Null on reviews from before the split. */
+  fitScore: number | null;
+  /** Recruiter's advance/pass call. Null on reviews from before the split. */
+  shortlist: TailoringShortlist | null;
+  /** Unfixable gaps (missing stack, availability…) — job-choice signal, not edit instructions. */
+  gaps: string[];
   issues: TailoringIssue[];
   createdAt: string;
 }
@@ -141,6 +187,9 @@ export interface TailoringReviewHistoryEntry {
   kind: string;
   documentId: string;
   score: number;
+  fitScore: number | null;
+  shortlist: TailoringShortlist | null;
+  gaps: string[];
   issues: TailoringIssue[];
   createdAt: string;
 }
@@ -165,6 +214,7 @@ export interface ProjectSnapshot {
   questionHistory: QuestionAnswerRecord[];
   jobs: JobRecord[];
   jobMatches: JobMatch[];
+  jobApplications: JobApplication[];
   tailoringReviews: TailoringReview[];
   tailoringReviewHistory: TailoringReviewHistoryEntry[];
   explorer: ExplorerConfigRecord;

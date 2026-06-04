@@ -12,9 +12,11 @@ import type {
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import {
+  clearJobApplication,
   createCoachAnchorThread,
   createProject as createProjectRequest,
   continueTaskLogin,
+  deleteProject as deleteProjectRequest,
   deleteProjectJob,
   interruptProjectTask,
   deleteProjectResume,
@@ -25,6 +27,7 @@ import {
   switchActiveResume as switchActiveResumeRequest,
   updateCoachNextStep,
   updateDocument as updateDocumentRequest,
+  updateJobApplication,
   updateQuestionCard as updateQuestionCardRequest,
   updateProjectExplorer,
   uploadProjectResume,
@@ -67,6 +70,22 @@ export function useCreateProject() {
           return current.map((p) => (p.project.id === project.project.id ? project : p));
         },
       );
+    },
+  });
+}
+
+export function useDeleteProject() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (projectId: string) => deleteProjectRequest(projectId),
+    onSuccess: (_result, projectId) => {
+      queryClient.removeQueries({ queryKey: projectsKeys.detail(projectId) });
+      queryClient.setQueryData<import("@jobseeker/contracts").ProjectSnapshot[]>(
+        projectsKeys.list(),
+        (current) => current?.filter((p) => p.project.id !== projectId),
+      );
+      queryClient.invalidateQueries({ queryKey: projectsKeys.list() });
     },
   });
 }
@@ -136,6 +155,39 @@ export function useDeleteJob() {
   return useMutation({
     mutationFn: ({ projectId, jobId }: { projectId: string; jobId: string }) =>
       deleteProjectJob(projectId, jobId),
+    onSuccess: (project, { projectId }) => {
+      queryClient.setQueryData(projectsKeys.detail(projectId), project);
+      queryClient.invalidateQueries({ queryKey: projectsKeys.list() });
+    },
+  });
+}
+
+export function useUpdateJobApplication() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      projectId,
+      jobId,
+      input,
+    }: {
+      projectId: string;
+      jobId: string;
+      input: import("@jobseeker/contracts").UpdateJobApplicationInput;
+    }) => updateJobApplication(projectId, jobId, input),
+    onSuccess: (project, { projectId }) => {
+      queryClient.setQueryData(projectsKeys.detail(projectId), project);
+      queryClient.invalidateQueries({ queryKey: projectsKeys.list() });
+    },
+  });
+}
+
+export function useClearJobApplication() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ projectId, jobId }: { projectId: string; jobId: string }) =>
+      clearJobApplication(projectId, jobId),
     onSuccess: (project, { projectId }) => {
       queryClient.setQueryData(projectsKeys.detail(projectId), project);
       queryClient.invalidateQueries({ queryKey: projectsKeys.list() });

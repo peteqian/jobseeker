@@ -15,6 +15,7 @@ import { Route as IndexRouteImport } from "./routes/index"
 import { Route as ProjectsIndexRouteImport } from "./routes/projects.index"
 import { Route as ProjectsProjectIdRouteImport } from "./routes/projects.$projectId"
 import { Route as ProjectsProjectIdIndexRouteImport } from "./routes/projects.$projectId.index"
+import { Route as ProjectsProjectIdTrackerRouteImport } from "./routes/projects.$projectId.tracker"
 import { Route as ProjectsProjectIdTailoringRouteImport } from "./routes/projects.$projectId.tailoring"
 import { Route as ProjectsProjectIdResumeRouteImport } from "./routes/projects.$projectId.resume"
 import { Route as ProjectsProjectIdProfileRouteImport } from "./routes/projects.$projectId.profile"
@@ -52,6 +53,12 @@ const ProjectsProjectIdIndexRoute = ProjectsProjectIdIndexRouteImport.update({
   path: "/",
   getParentRoute: () => ProjectsProjectIdRoute,
 } as any)
+const ProjectsProjectIdTrackerRoute =
+  ProjectsProjectIdTrackerRouteImport.update({
+    id: "/tracker",
+    path: "/tracker",
+    getParentRoute: () => ProjectsProjectIdRoute,
+  } as any)
 const ProjectsProjectIdTailoringRoute =
   ProjectsProjectIdTailoringRouteImport.update({
     id: "/tailoring",
@@ -98,6 +105,7 @@ export interface FileRoutesByFullPath {
   "/projects/$projectId/profile": typeof ProjectsProjectIdProfileRoute
   "/projects/$projectId/resume": typeof ProjectsProjectIdResumeRoute
   "/projects/$projectId/tailoring": typeof ProjectsProjectIdTailoringRoute
+  "/projects/$projectId/tracker": typeof ProjectsProjectIdTrackerRoute
   "/projects/$projectId/": typeof ProjectsProjectIdIndexRoute
   "/projects/$projectId/jobs/$jobId/editor": typeof ProjectsProjectIdJobsJobIdEditorRoute
 }
@@ -111,6 +119,7 @@ export interface FileRoutesByTo {
   "/projects/$projectId/profile": typeof ProjectsProjectIdProfileRoute
   "/projects/$projectId/resume": typeof ProjectsProjectIdResumeRoute
   "/projects/$projectId/tailoring": typeof ProjectsProjectIdTailoringRoute
+  "/projects/$projectId/tracker": typeof ProjectsProjectIdTrackerRoute
   "/projects/$projectId": typeof ProjectsProjectIdIndexRoute
   "/projects/$projectId/jobs/$jobId/editor": typeof ProjectsProjectIdJobsJobIdEditorRoute
 }
@@ -126,6 +135,7 @@ export interface FileRoutesById {
   "/projects/$projectId/profile": typeof ProjectsProjectIdProfileRoute
   "/projects/$projectId/resume": typeof ProjectsProjectIdResumeRoute
   "/projects/$projectId/tailoring": typeof ProjectsProjectIdTailoringRoute
+  "/projects/$projectId/tracker": typeof ProjectsProjectIdTrackerRoute
   "/projects/$projectId/": typeof ProjectsProjectIdIndexRoute
   "/projects/$projectId/jobs/$jobId/editor": typeof ProjectsProjectIdJobsJobIdEditorRoute
 }
@@ -142,6 +152,7 @@ export interface FileRouteTypes {
     | "/projects/$projectId/profile"
     | "/projects/$projectId/resume"
     | "/projects/$projectId/tailoring"
+    | "/projects/$projectId/tracker"
     | "/projects/$projectId/"
     | "/projects/$projectId/jobs/$jobId/editor"
   fileRoutesByTo: FileRoutesByTo
@@ -155,6 +166,7 @@ export interface FileRouteTypes {
     | "/projects/$projectId/profile"
     | "/projects/$projectId/resume"
     | "/projects/$projectId/tailoring"
+    | "/projects/$projectId/tracker"
     | "/projects/$projectId"
     | "/projects/$projectId/jobs/$jobId/editor"
   id:
@@ -169,6 +181,7 @@ export interface FileRouteTypes {
     | "/projects/$projectId/profile"
     | "/projects/$projectId/resume"
     | "/projects/$projectId/tailoring"
+    | "/projects/$projectId/tracker"
     | "/projects/$projectId/"
     | "/projects/$projectId/jobs/$jobId/editor"
   fileRoutesById: FileRoutesById
@@ -225,6 +238,13 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof ProjectsProjectIdIndexRouteImport
       parentRoute: typeof ProjectsProjectIdRoute
     }
+    "/projects/$projectId/tracker": {
+      id: "/projects/$projectId/tracker"
+      path: "/tracker"
+      fullPath: "/projects/$projectId/tracker"
+      preLoaderRoute: typeof ProjectsProjectIdTrackerRouteImport
+      parentRoute: typeof ProjectsProjectIdRoute
+    }
     "/projects/$projectId/tailoring": {
       id: "/projects/$projectId/tailoring"
       path: "/tailoring"
@@ -276,6 +296,7 @@ interface ProjectsProjectIdRouteChildren {
   ProjectsProjectIdProfileRoute: typeof ProjectsProjectIdProfileRoute
   ProjectsProjectIdResumeRoute: typeof ProjectsProjectIdResumeRoute
   ProjectsProjectIdTailoringRoute: typeof ProjectsProjectIdTailoringRoute
+  ProjectsProjectIdTrackerRoute: typeof ProjectsProjectIdTrackerRoute
   ProjectsProjectIdIndexRoute: typeof ProjectsProjectIdIndexRoute
   ProjectsProjectIdJobsJobIdEditorRoute: typeof ProjectsProjectIdJobsJobIdEditorRoute
 }
@@ -286,6 +307,7 @@ const ProjectsProjectIdRouteChildren: ProjectsProjectIdRouteChildren = {
   ProjectsProjectIdProfileRoute: ProjectsProjectIdProfileRoute,
   ProjectsProjectIdResumeRoute: ProjectsProjectIdResumeRoute,
   ProjectsProjectIdTailoringRoute: ProjectsProjectIdTailoringRoute,
+  ProjectsProjectIdTrackerRoute: ProjectsProjectIdTrackerRoute,
   ProjectsProjectIdIndexRoute: ProjectsProjectIdIndexRoute,
   ProjectsProjectIdJobsJobIdEditorRoute: ProjectsProjectIdJobsJobIdEditorRoute,
 }
