@@ -2,6 +2,8 @@
   "name": "desktop",
   "version": "0.0.1",
   "private": true,
+  "description": "Jobseeker desktop app",
+  "author": "Peter Qian",
   "type": "module",
   "main": "dist-electron/main.cjs",
   "scripts": {
@@ -20,11 +22,11 @@
     "dist:win:x64": "electron-builder --win nsis --x64 --publish never"
   },
   "dependencies": {
-    "electron": "^40.0.0",
     "electron-updater": "^6.6.2"
   },
   "devDependencies": {
     "@types/node": "^25.1.0",
+    "electron": "^40.0.0",
     "electron-builder": "^26.0.12",
     "tsdown": "^0.20.3",
     "typescript": "5.9.3"
