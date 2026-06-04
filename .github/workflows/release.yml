@@ -258,6 +258,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.label }}
+          if-no-files-found: error
           path: |
             apps/desktop/dist/*.dmg
             apps/desktop/dist/*.zip
