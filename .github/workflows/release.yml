@@ -223,10 +223,6 @@ jobs:
     env:
       CSC_IDENTITY_AUTO_DISCOVERY: "false"
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      # Signing/notarization secrets (CSC_LINK, CSC_KEY_PASSWORD,
-      # APPLE_API_KEY{,_ID}, APPLE_API_ISSUER) are intentionally not wired
-      # up: passing an empty CSC_LINK makes electron-builder treat "" as a
-      # certificate path and fail. Re-add them once the secrets exist.
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -249,6 +245,42 @@ jobs:
 
       - name: Set desktop package version
         run: node scripts/set-desktop-version.mjs "${{ needs.preflight.outputs.version }}"
+
+      # Wire signing/notarization only when the secrets exist. Exporting an
+      # empty CSC_LINK makes electron-builder treat "" as a certificate path
+      # and fail, so unset secrets must stay entirely out of the env.
+      - name: Configure macOS signing
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          CSC_LINK_SECRET: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD_SECRET: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_API_KEY_SECRET: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID_SECRET: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_SECRET: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          set -euo pipefail
+
+          if [[ -n "$CSC_LINK_SECRET" && -n "$CSC_KEY_PASSWORD_SECRET" ]]; then
+            {
+              echo "CSC_LINK=$CSC_LINK_SECRET"
+              echo "CSC_KEY_PASSWORD=$CSC_KEY_PASSWORD_SECRET"
+            } >> "$GITHUB_ENV"
+            echo "macOS code signing enabled"
+          else
+            echo "::notice::macOS code signing skipped: CSC_LINK and/or CSC_KEY_PASSWORD secrets are not configured (ad-hoc signature will be used)"
+          fi
+
+          if [[ -n "$APPLE_API_KEY_SECRET" && -n "$APPLE_API_KEY_ID_SECRET" && -n "$APPLE_API_ISSUER_SECRET" ]]; then
+            {
+              echo "APPLE_API_KEY=$APPLE_API_KEY_SECRET"
+              echo "APPLE_API_KEY_ID=$APPLE_API_KEY_ID_SECRET"
+              echo "APPLE_API_ISSUER=$APPLE_API_ISSUER_SECRET"
+            } >> "$GITHUB_ENV"
+            echo "macOS notarization enabled"
+          else
+            echo "::notice::macOS notarization skipped: APPLE_API_KEY/APPLE_API_KEY_ID/APPLE_API_ISSUER secrets are not configured"
+          fi
 
       - name: Build distributable
         run: bun run ${{ matrix.dist_command }}
