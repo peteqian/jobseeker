@@ -28,7 +28,7 @@ export type ChatProviderResponse = {
   models: ProviderModel[];
 };
 
-const WS_URL = (import.meta as any).env?.VITE_WS_URL ?? "ws://127.0.0.1:3458/ws";
+const WS_URL = (import.meta as any).env?.VITE_WS_URL ?? "ws://127.0.0.1:4858/ws";
 
 const ProtocolLayer = RpcClient.layerProtocolSocket().pipe(
   Layer.provide(Socket.layerWebSocket(WS_URL)),

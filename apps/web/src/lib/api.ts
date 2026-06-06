@@ -22,7 +22,7 @@ import type {
   UpdateExplorerConfigInput,
 } from "@jobseeker/contracts";
 
-const serverUrl = import.meta.env.VITE_SERVER_URL ?? "http://127.0.0.1:3456";
+const serverUrl = import.meta.env.VITE_SERVER_URL ?? "http://127.0.0.1:4856";
 
 type ProjectListResponse = { projects: ProjectSnapshot[] };
 type EventListResponse = { events: RuntimeEvent[] };

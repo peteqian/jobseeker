@@ -12,7 +12,7 @@ const envSchema = z.object({
   HOST: z.string().default("127.0.0.1"),
   PORT: z
     .string()
-    .default("3456")
+    .default("4856")
     .transform((val) => parseInt(val, 10)),
   ANTHROPIC_API_KEY: z.string().optional(),
 });

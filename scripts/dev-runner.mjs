@@ -17,8 +17,8 @@ if (!args) {
   process.exit(1);
 }
 
-const serverPort = Number.parseInt(process.env.JOBSEEKER_SERVER_PORT ?? "3456", 10);
-const webPort = Number.parseInt(process.env.JOBSEEKER_WEB_PORT ?? "3457", 10);
+const serverPort = Number.parseInt(process.env.JOBSEEKER_SERVER_PORT ?? "4856", 10);
+const webPort = Number.parseInt(process.env.JOBSEEKER_WEB_PORT ?? "4857", 10);
 const wsPort = serverPort + 2;
 
 const env = {

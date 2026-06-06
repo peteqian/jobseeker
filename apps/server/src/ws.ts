@@ -178,7 +178,7 @@ const ChatHandlers = ChatRpcGroup.toLayer(
 // Assemble the RPC server layers
 // ---------------------------------------------------------------------------
 
-const WS_PORT = Number(process.env.PORT ?? "3456") + 2; // 3458 (3457 is the web dev server)
+const WS_PORT = Number(process.env.PORT ?? "4856") + 2; // 4858 (4857 is the web dev server)
 
 // WebSocket protocol on /ws, with JSON serialization
 const WsProtocol = RpcServer.layerProtocolWebsocket({ path: "/ws" }).pipe(

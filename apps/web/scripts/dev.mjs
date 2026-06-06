@@ -5,15 +5,15 @@ import { spawn } from "node:child_process";
 function resolvePort() {
   const rawUrl = process.env.VITE_DEV_SERVER_URL?.trim();
   if (!rawUrl) {
-    return 3457;
+    return 4857;
   }
 
   try {
     const url = new URL(rawUrl);
     const port = Number.parseInt(url.port, 10);
-    return Number.isInteger(port) && port > 0 ? port : 3457;
+    return Number.isInteger(port) && port > 0 ? port : 4857;
   } catch {
-    return 3457;
+    return 4857;
   }
 }
 

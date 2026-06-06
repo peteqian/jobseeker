@@ -9,7 +9,7 @@ import { app, BrowserWindow, shell } from "electron";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
-const backendPort = Number.parseInt(process.env.PORT ?? "3456", 10) || 3456;
+const backendPort = Number.parseInt(process.env.PORT ?? "4856", 10) || 4856;
 
 type AutoUpdaterLike = {
   autoDownload: boolean;
