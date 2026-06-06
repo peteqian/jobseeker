@@ -5,6 +5,7 @@ import { env } from "../../env";
 import { isCodexAvailable } from "../../lib/codexBin";
 import { logError, logInfo, logWarn } from "../../lib/log";
 import { ensureScopeDir } from "../../lib/paths";
+import { getProviderSettings } from "../../lib/provider-settings";
 import { pickProviderAdapter } from "../../provider/layers/providerAdapterRegistry";
 import type { ProviderStreamEvent } from "../../provider/types";
 
@@ -197,7 +198,13 @@ export function parseJsonResponse<T = unknown>(text: string, label: string): T |
 }
 
 async function callCodex(opts: OneShotPromptOptions): Promise<string | null> {
-  const binPath = process.env.CODEX_BIN ?? "codex";
+  const settings = getProviderSettings();
+  const binPath = process.env.CODEX_BIN ?? settings.codex.binaryPath ?? "codex";
+  // Point codex at the same auth home every other caller (and the auth
+  // guard) uses; otherwise a custom homePath in provider settings would
+  // leave this spawn refreshing ~/.codex while the guard locks the other.
+  const codexHome = settings.codex.homePath?.trim();
+  const spawnEnv = codexHome ? { ...process.env, CODEX_HOME: codexHome } : process.env;
   const fullPrompt = opts.systemPrompt ? `${opts.systemPrompt}\n\n${opts.prompt}` : opts.prompt;
 
   const args = [binPath, "exec", "--ephemeral", "-s", "read-only"];
@@ -212,7 +219,7 @@ async function callCodex(opts: OneShotPromptOptions): Promise<string | null> {
 
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   try {
-    const proc = Bun.spawn(args, { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+    const proc = Bun.spawn(args, { stdin: "pipe", stdout: "pipe", stderr: "pipe", env: spawnEnv });
     proc.stdin.write(new TextEncoder().encode(fullPrompt));
     proc.stdin.end();
 
