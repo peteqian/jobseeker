@@ -26,7 +26,7 @@ on:
 permissions:
   contents: write
 
-# Rapid pushes to dev cancel the in-flight staging build; tag and
+# Rapid pushes to dev cancel the in-flight canary build; tag and
 # scheduled runs land in distinct groups and are unaffected.
 concurrency:
   group: release-${{ github.ref }}
@@ -100,13 +100,13 @@ jobs:
           set -euo pipefail
 
           if [[ "$EVENT_NAME" == "push" && "$REF" == "refs/heads/dev" ]]; then
-            staging_date=$(date -u -d "$RUN_DATE" +%Y%m%d)
-            version="0.0.0-staging.${staging_date}.${RUN_NUMBER}"
+            canary_date=$(date -u -d "$RUN_DATE" +%Y%m%d)
+            version="0.0.0-canary.${canary_date}.${RUN_NUMBER}"
 
-            echo "release_channel=staging" >> "$GITHUB_OUTPUT"
+            echo "release_channel=canary" >> "$GITHUB_OUTPUT"
             echo "version=$version" >> "$GITHUB_OUTPUT"
-            echo "tag=staging-v${version}" >> "$GITHUB_OUTPUT"
-            echo "release_name=Jobseeker Staging ${version}" >> "$GITHUB_OUTPUT"
+            echo "tag=canary-v${version}" >> "$GITHUB_OUTPUT"
+            echo "release_name=Jobseeker Canary ${version}" >> "$GITHUB_OUTPUT"
             echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
             echo "make_latest=false" >> "$GITHUB_OUTPUT"
             echo "ref=$SHA" >> "$GITHUB_OUTPUT"
@@ -310,20 +310,20 @@ jobs:
           path: release-assets
           merge-multiple: true
 
-      # Staging tags are unique per run (immutable releases forbid tag
-      # reuse), so prune every older staging release to keep just the
+      # Canary tags are unique per run (immutable releases forbid tag
+      # reuse), so prune every older canary release to keep just the
       # newest one. Tag refs of immutable releases cannot be deleted and
       # are left behind; they are harmless.
-      - name: Prune older staging releases
-        if: needs.preflight.outputs.release_channel == 'staging'
+      - name: Prune older canary releases
+        if: needs.preflight.outputs.release_channel == 'canary'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           gh release list --repo "$GITHUB_REPOSITORY" --limit 100 \
-            --json tagName --jq '.[] | select(.tagName | startswith("staging-v")) | .tagName' |
+            --json tagName --jq '.[] | select(.tagName | startswith("canary-v")) | .tagName' |
           while read -r tag; do
-            echo "Deleting old staging release: $tag"
+            echo "Deleting old canary release: $tag"
             gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --yes || true
           done
 
@@ -339,7 +339,7 @@ jobs:
           prerelease: ${{ needs.preflight.outputs.is_prerelease == 'true' }}
           make_latest: ${{ needs.preflight.outputs.make_latest == 'true' }}
           files: release-assets/**
-          generate_release_notes: ${{ needs.preflight.outputs.release_channel != 'staging' }}
+          generate_release_notes: ${{ needs.preflight.outputs.release_channel != 'canary' }}
 
       - name: Publish release
         env:
