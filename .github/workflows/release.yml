@@ -105,7 +105,7 @@ jobs:
 
             echo "release_channel=staging" >> "$GITHUB_OUTPUT"
             echo "version=$version" >> "$GITHUB_OUTPUT"
-            echo "tag=staging" >> "$GITHUB_OUTPUT"
+            echo "tag=staging-v${version}" >> "$GITHUB_OUTPUT"
             echo "release_name=Jobseeker Staging ${version}" >> "$GITHUB_OUTPUT"
             echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
             echo "make_latest=false" >> "$GITHUB_OUTPUT"
@@ -310,11 +310,22 @@ jobs:
           path: release-assets
           merge-multiple: true
 
-      - name: Replace previous staging release
+      # Staging tags are unique per run (immutable releases forbid tag
+      # reuse), so prune every older staging release to keep just the
+      # newest one. Tag refs of immutable releases cannot be deleted and
+      # are left behind; they are harmless.
+      - name: Prune older staging releases
         if: needs.preflight.outputs.release_channel == 'staging'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release delete staging --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes || true
+        run: |
+          set -euo pipefail
+          gh release list --repo "$GITHUB_REPOSITORY" --limit 100 \
+            --json tagName --jq '.[] | select(.tagName | startswith("staging-v")) | .tagName' |
+          while read -r tag; do
+            echo "Deleting old staging release: $tag"
+            gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --yes || true
+          done
 
       - name: Create release and upload assets
         uses: softprops/action-gh-release@v2
