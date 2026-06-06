@@ -7,10 +7,11 @@ import {
 
 import type { ChatModelSelection, StructuredProfile } from "@jobseeker/contracts";
 
-import { acquireBrowserSession, realChromeExecutable } from "../../lib/browserSession";
+import { acquireBrowserSession } from "../../lib/browserSession";
 import { logInfo, logWarn } from "../../lib/log";
 import { extractBodyText } from "../../lib/pageText";
-import { browserProfileDir, ensureScopeDir } from "../../lib/paths";
+import { ensureScopeDir } from "../../lib/paths";
+import { sharedProfileLaunchOptions } from "../explorer/browserLaunch";
 import { buildApplyActions } from "./actions";
 import { answersMap, upsertAnswer } from "./answers";
 import { applyMinScore, assessFit } from "./fit";
@@ -50,15 +51,11 @@ export interface RunApplyInput {
  * by hand once in the visible window. We never handle passwords.
  */
 export async function runApply(input: RunApplyInput): Promise<ApplyResult> {
-  const userDataDir = browserProfileDir();
-  const { session, owned } = await acquireBrowserSession({
-    channel: (process.env.EXPLORER_BROWSER_CHANNEL as "chrome" | "chromium" | "msedge") ?? "chrome",
-    headless: false,
-    userDataDir,
-    fingerprintMode: "native",
-    executablePath: realChromeExecutable(),
-    autoInstallBrowser: true,
-  });
+  // Same launch options as the explorer: one shared profile, one consistent
+  // fingerprint, so sign-ins made during any flow carry over to this one.
+  const { session, owned } = await acquireBrowserSession(
+    sharedProfileLaunchOptions({ headless: false }),
+  );
 
   try {
     const page = await session.newPage();

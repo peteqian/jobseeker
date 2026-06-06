@@ -106,6 +106,11 @@ export async function runTask(
       taskType: "apply_job",
       jobId: input.jobId,
       phase: result.status,
+      // Surface why the agent stopped; otherwise failures are opaque in the
+      // UI and the reason only exists in server stdout.
+      ...(result.status === "failed" ? { reason: result.reason } : {}),
+      ...(result.status === "awaiting_submit" ? { summary: result.summary } : {}),
+      ...(result.status === "skipped_low_fit" ? { reasons: result.reasons } : {}),
     });
     return {};
   }

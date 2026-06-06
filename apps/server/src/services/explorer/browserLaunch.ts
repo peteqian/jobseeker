@@ -3,13 +3,18 @@ import { existsSync } from "node:fs";
 import { realChromeExecutable } from "../../lib/browserSession";
 import { browserProfileDir } from "../../lib/paths";
 
-/** Launch settings for the normal explorer attempt. */
-export function getLaunchOptions() {
+/**
+ * Launch settings shared by every feature driving the shared browser profile
+ * (explorer, apply). Identical options mean the profile always presents one
+ * consistent fingerprint, so a sign-in made during any flow keeps working in
+ * the others.
+ */
+export function sharedProfileLaunchOptions(overrides?: { headless?: boolean }) {
   const userDataDir = browserProfileDir();
   const extensionPaths = readExtensionPathsFromEnv();
   return {
     channel: (process.env.EXPLORER_BROWSER_CHANNEL as "chrome" | "chromium" | "msedge") ?? "chrome",
-    headless: process.env.EXPLORER_HEADLESS === "true",
+    headless: overrides?.headless ?? process.env.EXPLORER_HEADLESS === "true",
     userDataDir,
     proxyServer: process.env.EXPLORER_PROXY_SERVER,
     proxyBypass: process.env.EXPLORER_PROXY_BYPASS,
@@ -24,29 +29,18 @@ export function getLaunchOptions() {
   } as const;
 }
 
+/** Launch settings for the normal explorer attempt. */
+export function getLaunchOptions() {
+  return sharedProfileLaunchOptions();
+}
+
 /**
  * Launch settings for the retry attempt after an anti-bot interstitial is
  * detected. Reuses the SAME persistent profile as the primary attempt so any
  * sign-in carries over — a separate retry profile would drop the login.
  */
 export function getRetryLaunchOptions() {
-  const userDataDir = browserProfileDir();
-  const extensionPaths = readExtensionPathsFromEnv();
-  return {
-    channel: (process.env.EXPLORER_BROWSER_CHANNEL as "chrome" | "chromium" | "msedge") ?? "chrome",
-    headless: false,
-    userDataDir,
-    proxyServer: process.env.EXPLORER_PROXY_SERVER,
-    proxyBypass: process.env.EXPLORER_PROXY_BYPASS,
-    userAgent: process.env.EXPLORER_USER_AGENT,
-    acceptLanguage: process.env.EXPLORER_ACCEPT_LANGUAGE,
-    locale: process.env.EXPLORER_LOCALE,
-    timezoneId: process.env.EXPLORER_TIMEZONE,
-    extensionPaths,
-    fingerprintMode: "native",
-    executablePath: realChromeExecutable(),
-    autoInstallBrowser: true,
-  } as const;
+  return sharedProfileLaunchOptions({ headless: false });
 }
 
 /** Reads optional unpacked browser extensions from the environment. */
