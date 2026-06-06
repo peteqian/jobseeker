@@ -8,7 +8,7 @@ const shared = {
   // electron is a devDependency (electron-builder requires that), but it
   // must never be bundled — it resolves at runtime inside the app shell.
   external: ["electron", "electron-updater"],
-  inlineOnly: false,
+  inlineOnly: false as const,
 };
 
 export default defineConfig([
