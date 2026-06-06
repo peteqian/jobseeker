@@ -14,6 +14,7 @@ import { ensureScopeDir } from "../../lib/paths";
 import { sharedProfileLaunchOptions } from "../explorer/browserLaunch";
 import { buildApplyActions } from "./actions";
 import { answersMap, upsertAnswer } from "./answers";
+import { withCodexAuthGuard } from "../llm/codexAuth";
 import { applyMinScore, assessFit } from "./fit";
 import { buildApplyTask } from "./prompting";
 
@@ -61,7 +62,10 @@ export async function runApply(input: RunApplyInput): Promise<ApplyResult> {
     const page = await session.newPage();
     await page.goto(input.jobUrl);
     await page.waitForStablePage(3_000).catch(() => {});
-    if (input.signal.aborted) return { status: "failed", reason: "aborted" };
+    if (input.signal.aborted) {
+      if (owned) await session.close().catch(() => {});
+      return { status: "failed", reason: "aborted" };
+    }
 
     const roleText = await extractBodyText(page);
     const fit = await assessFit({
@@ -71,11 +75,16 @@ export async function runApply(input: RunApplyInput): Promise<ApplyResult> {
     });
     if (!fit) {
       logWarn("apply skipped: fit unknown", { jobUrl: input.jobUrl });
+      // Close on every early return: a leaked browser keeps holding the
+      // shared profile and the next launch dies with "Chrome exited before
+      // DevTools was ready".
+      if (owned) await session.close().catch(() => {});
       return { status: "skipped_fit_unknown" };
     }
     const cutoff = input.minScore ?? applyMinScore();
     if (fit.score < cutoff) {
       logInfo("apply skipped: low fit", { jobUrl: input.jobUrl, score: fit.score, cutoff });
+      if (owned) await session.close().catch(() => {});
       return { status: "skipped_low_fit", score: fit.score, reasons: fit.reasons };
     }
 
@@ -108,7 +117,10 @@ export async function runApply(input: RunApplyInput): Promise<ApplyResult> {
           summary: `Reached max steps (${maxSteps})`,
         };
       }
-      return decide(decisionInput, sig);
+      // Guard each codex step so a concurrent codex process (chat, explorer,
+      // fit judge) can't race the shared token's single-use refresh near
+      // expiry — that race kills the auth file with refresh_token_reused.
+      return withCodexAuthGuard(() => decide(decisionInput, sig));
     };
 
     const controller = new AgentController();

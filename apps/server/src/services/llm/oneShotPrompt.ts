@@ -227,7 +227,13 @@ async function callCodex(opts: OneShotPromptOptions): Promise<string | null> {
     const stdout = await Promise.race([stdoutPromise, timeoutPromise]);
     const exitCode = await proc.exited;
     if (exitCode !== 0) {
-      logWarn(`${opts.label} codex exited non-zero`, { exitCode });
+      // Without the stderr tail, auth failures (refresh_token_reused etc.)
+      // are indistinguishable from any other crash.
+      const stderr = await new Response(proc.stderr).text().catch(() => "");
+      logWarn(`${opts.label} codex exited non-zero`, {
+        exitCode,
+        stderr: stderr.trim().split("\n").slice(-3).join("\n").slice(0, 500),
+      });
       return null;
     }
     const text = stdout.trim();
